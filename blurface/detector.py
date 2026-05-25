@@ -2,6 +2,7 @@
 blurface.detector — YOLO face detector wrapper.
 """
 import os
+import sys
 import time
 import numpy as np
 from ultralytics import YOLO
@@ -18,6 +19,12 @@ def _resolve_model(path: str) -> str:
     alt2 = os.path.join(script_dir, "..", "models", os.path.basename(path))
     if os.path.isfile(alt2):
         return alt2
+    # PyInstaller frozen: look next to the exe
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        alt3 = os.path.join(exe_dir, "models", os.path.basename(path))
+        if os.path.isfile(alt3):
+            return alt3
     return path  # let YOLO try auto-download
 
 

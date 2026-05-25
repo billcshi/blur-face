@@ -3,9 +3,38 @@ blurface.encoder — ffmpeg pipe wrapper for H.264 encoding with audio.
 
 Supports both CPU (libx264) and GPU (h264_nvenc) encoding.
 """
+import sys
+import os
 import subprocess
 import shutil
 import imageio_ffmpeg
+
+
+def _find_ffmpeg() -> str:
+    """Find ffmpeg binary, handling PyInstaller frozen bundles."""
+    try:
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except (FileNotFoundError, RuntimeError, ImportError):
+        pass
+
+    # PyInstaller frozen: search bundled location
+    if getattr(sys, 'frozen', False):
+        bundle_dir = os.path.dirname(sys.executable)
+        # imageio_ffmpeg bundles versioned names like ffmpeg-win64-v4.2.2.exe
+        import glob as _glob
+        for base in [
+            os.path.join(bundle_dir, "imageio_ffmpeg", "bin"),
+        ]:
+            ffmpeg_candidates = _glob.glob(os.path.join(base, "ffmpeg*"))
+            if ffmpeg_candidates:
+                return ffmpeg_candidates[0]
+
+    # Fallback: try system ffmpeg
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+
+    raise RuntimeError("ffmpeg not found. Install ffmpeg or imageio-ffmpeg.")
 
 
 def _has_nvenc(ffmpeg_exe: str) -> bool:
@@ -31,7 +60,7 @@ class FFmpegEncoder:
 
     def __init__(self, output_path: str, width: int, height: int,
                  fps: float, audio_source: str, use_nvenc: bool = True):
-        ff = imageio_ffmpeg.get_ffmpeg_exe()
+        ff = _find_ffmpeg()
 
         if use_nvenc and _has_nvenc(ff):
             vcodec = ["-c:v", "h264_nvenc", "-preset", "p1", "-cq", "23"]

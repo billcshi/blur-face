@@ -47,6 +47,8 @@ def parse_args():
         help="Disable optical-flow tracking (use prediction-only)")
     p.add_argument("--no-nvenc", action="store_true",
         help="Disable NVENC hardware encoding (use libx264 CPU)")
+    p.add_argument("--version", action="store_true",
+        help="Show version and exit")
     return p.parse_args()
 
 

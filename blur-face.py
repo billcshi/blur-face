@@ -5,7 +5,7 @@ blur-face — Face blur with tracking + optical flow.
 Usage:
   python blur-face.py input.mov -o output.mp4
   python blur-face.py input.mov --debug --profile
-  python blur-face.py input.mov --detect-interval 100
+  python blur-face.py input.mov --preset fast
   python blur-face.py input.mov --model yolo26n-face.pt --thresh 0.15
 """
 import sys
@@ -14,6 +14,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import cv2
 import numpy as np
+
+__version__ = "1.0.0"
 
 # Ensure the package is importable from script directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -35,6 +37,9 @@ def _detect_worker(detector, frame, conf):
 
 def main():
     args = parse_args()
+    if args.version:
+        print(f"blur-face v{__version__}")
+        sys.exit(0)
     args.time_thresh = parse_time_thresh(args.time_thresh)
     exclude_ids = parse_exclude_ids(args.exclude_ids)
 
@@ -190,6 +195,34 @@ def main():
             print(f"  → CPU/GPU overlap: {overlap_pct:.0f}%")
     print(f"{'='*60}")
 
+    if getattr(sys, 'frozen', False):
+        input("\nPress Enter to exit...")
+
+
+def _show_usage():
+    """Print usage and wait for keypress on Windows (frozen exe)."""
+    print("Usage:")
+    print("  Drag a video file onto this exe, or")
+    print("  blur-face.exe input.mp4 [-o output.mp4] [options]")
+    print()
+    print("Common options:")
+    print("  -o PATH          Output path (default: output_blur.mp4)")
+    print("  --preset fast     Faster processing, slightly less tracking")
+    print("  --debug           Show detection boxes without blurring")
+    print("  --model PATH      Model file (default: yolov11m-face.pt)")
+    print("  --thresh 0.3      Detection threshold (lower = more sensitive)")
+    print("  --no-flow         Disable optical flow tracking")
+    print("  --no-nvenc        Use CPU encoding instead of NVENC")
+    print()
+    if getattr(sys, 'frozen', False):
+        input("Press Enter to exit...")
+
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2 or (len(sys.argv) == 2 and sys.argv[1] == "--version"):
+        print(f"blur-face v{__version__}")
+        if len(sys.argv) < 2:
+            print()
+            _show_usage()
+        sys.exit(0)
     main()
