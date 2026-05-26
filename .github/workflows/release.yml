@@ -1,0 +1,39 @@
+name: Build Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-cpu:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download model
+        run: |
+          mkdir models
+          curl -L -o models/yolov11m-face.pt https://github.com/akanametov/yolo-face/releases/download/1.0.0/yolov11m-face.pt
+
+      - name: Build CPU release
+        run: python build-release.py --cpu --no-zip
+
+      - name: Create CPU zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/blur-face-cpu/* -DestinationPath blur-face-win64-cpu.zip
+
+      - name: Upload CPU release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: blur-face-win64-cpu.zip
+          body: |
+            See [CHANGELOG.md](./CHANGELOG.md) for details.
+          draft: true
