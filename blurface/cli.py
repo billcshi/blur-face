@@ -1,79 +1,159 @@
-"""
-blurface.cli — Argument parsing and config.
-"""
+"""Command-line parsing for blur-face."""
+
+from __future__ import annotations
+
 import argparse
+from collections.abc import Sequence
+from pathlib import Path
+
+from .config import AppConfig, ConfigError
 
 
-def parse_args():
-    p = argparse.ArgumentParser(
+def parse_time_thresh(raw: str) -> tuple[tuple[float, float], ...]:
+    """Parse ``sec:threshold,sec:threshold`` into a sorted tuple."""
+    if not raw:
+        return ()
+    segments: list[tuple[float, float]] = []
+    try:
+        for part in raw.split(","):
+            fields = part.strip().split(":")
+            if len(fields) != 2:
+                raise ValueError
+            segments.append((float(fields[0]), float(fields[1])))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            'expected "sec:threshold,sec:threshold"'
+        ) from exc
+    return tuple(sorted(segments))
+
+
+def parse_exclude_ids(raw: str) -> frozenset[int]:
+    if not raw:
+        return frozenset()
+    try:
+        return frozenset(
+            int(value.strip()) for value in raw.split(",") if value.strip()
+        )
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "expected comma-separated integer IDs"
+        ) from exc
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
         prog="blur-face",
-        description="Face blur with tracking + optical flow — YOLO detection + custom tracker."
+        description="Local video face blur with detection, tracking, and optical flow.",
     )
-    p.add_argument("input", help="Input video path")
-    p.add_argument("-o", "--output", default="output_blur.mp4", help="Output path")
-    p.add_argument("--model", default="yolov11m-face.pt",
-        help="Model file (yolo26n-face.pt / yolo26m-face.pt / yolov11m-face.pt)")
-    p.add_argument("--thresh", type=float, default=0.3,
-        help="Detection threshold (0-1, lower = more sensitive)")
-    p.add_argument("--time-thresh", type=str, default="",
-        help='Time-based thresholds: "sec:thresh,sec:thresh"')
-    p.add_argument("--mask-scale", type=float, default=1.35,
-        help="Scale factor for blur region")
-    p.add_argument("--blur-kernel", type=int, default=51,
-        help="Gaussian blur kernel size (odd, larger = more blur)")
-    p.add_argument("--device", default="cuda",
-        help="cuda or cpu")
-    p.add_argument("--debug", action="store_true",
-        help="Review mode: colored boxes + IDs, no blur")
-    p.add_argument("--profile", action="store_true",
-        help="Show per-phase timing")
-    p.add_argument("--exclude-ids", type=str, default="",
-        help="Track IDs to skip blurring, e.g. '2,5,7'")
-    p.add_argument("--lost-buffer", type=int, default=180,
-        help="Frames to predict after detection lost (180 ≈ 6s @30fps)")
-    p.add_argument("--smooth", type=float, default=0.7,
-        help="Smoothing factor: 0=rigid, 1=no smoothing")
-    p.add_argument("--preset", choices=("quality", "fast"), default="quality",
-        help="Tracking preset: quality keeps full optical flow; fast limits optical-flow cost")
-    p.add_argument("--max-face-height-ratio", type=float, default=0.4,
-        help="Ignore detections taller than this fraction of frame height")
-    p.add_argument("--flow-max-points", type=int, default=50,
-        help="Max feature points per face for optical flow")
-    p.add_argument("--flow-min-confirmations", type=int, default=3,
-        help="Total detections before optical flow is enabled for a track")
-    p.add_argument("--flow-max-missed", type=int, default=0,
-        help="Only run optical flow for the first N missed frames per track (0=no limit)")
-    p.add_argument("--no-flow", action="store_true",
-        help="Disable optical-flow tracking (use prediction-only)")
-    p.add_argument("--no-nvenc", action="store_true",
-        help="Disable NVENC hardware encoding (use libx264 CPU)")
-    return p.parse_args()
+    parser.add_argument("input", type=Path, help="Input video path")
+    parser.add_argument("-o", "--output", type=Path, default=Path("output_blur.mp4"))
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Atomically replace an existing output after successful encoding",
+    )
+    parser.add_argument("--model", default="yolov11m-face.pt")
+    parser.add_argument("--thresh", type=float, default=0.3)
+    parser.add_argument("--time-thresh", type=parse_time_thresh, default=())
+    parser.add_argument("--mask-scale", type=float, default=1.35)
+    parser.add_argument("--blur-kernel", type=int, default=51)
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--ffmpeg",
+        type=Path,
+        help="FFmpeg executable (default: system FFmpeg, then bundled fallback)",
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="Draw track coverage; do not blur"
+    )
+    parser.add_argument("--profile", action="store_true")
+    parser.add_argument("--exclude-ids", type=parse_exclude_ids, default=frozenset())
+    parser.add_argument(
+        "--allow-unsafe-exclusions",
+        action="store_true",
+        help="Acknowledge that temporary track IDs can switch between people",
+    )
+    parser.add_argument("--lost-buffer", type=int, default=180)
+    parser.add_argument("--smooth", type=float, default=0.7)
+    parser.add_argument("--preset", choices=("quality", "fast"), default="quality")
+    parser.add_argument(
+        "--min-face-size",
+        type=int,
+        default=8,
+        help="Minimum detection width/height in pixels (default: 8)",
+    )
+    parser.add_argument(
+        "--max-face-height-ratio",
+        type=float,
+        default=1.0,
+        help="Maximum face height as a fraction of frame height (default: 1.0)",
+    )
+    parser.add_argument("--flow-max-points", type=int, default=50)
+    parser.add_argument("--flow-min-confirmations", type=int, default=3)
+    parser.add_argument("--flow-max-missed", type=int, default=0)
+    parser.add_argument("--no-flow", action="store_true")
+    parser.add_argument("--no-nvenc", action="store_true")
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Require a local model; never ask YOLO to download one",
+    )
+    return parser
 
 
+def parse_args(argv: Sequence[str] | None = None) -> AppConfig:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    flow_max_points = args.flow_max_points
+    flow_max_missed = args.flow_max_missed
+    if args.preset == "fast":
+        if flow_max_points == 50:
+            flow_max_points = 20
+        if flow_max_missed == 0:
+            flow_max_missed = 45
+    config = AppConfig(
+        input=args.input,
+        output=args.output,
+        overwrite=args.overwrite,
+        model=args.model,
+        threshold=args.thresh,
+        time_thresholds=args.time_thresh,
+        mask_scale=args.mask_scale,
+        blur_kernel=args.blur_kernel,
+        device=args.device,
+        ffmpeg=args.ffmpeg,
+        debug=args.debug,
+        profile=args.profile,
+        exclude_ids=args.exclude_ids,
+        allow_unsafe_exclusions=args.allow_unsafe_exclusions,
+        lost_buffer=args.lost_buffer,
+        smooth=args.smooth,
+        preset=args.preset,
+        min_face_size=args.min_face_size,
+        max_face_height_ratio=args.max_face_height_ratio,
+        flow_max_points=flow_max_points,
+        flow_min_confirmations=args.flow_min_confirmations,
+        flow_max_missed=flow_max_missed,
+        flow_enabled=not args.no_flow,
+        use_nvenc=not args.no_nvenc,
+        offline=args.offline,
+    )
+    try:
+        return config.validate()
+    except ConfigError as exc:
+        parser.error(str(exc))
+
+
+# Compatibility helpers for callers of the original module API.
 def get_thresh(args, frame_idx: int, fps: float) -> float:
+    if isinstance(args, AppConfig):
+        return args.threshold_for(frame_idx, fps)
     if not args.time_thresh:
         return args.thresh
-    sec = frame_idx / fps
-    th = args.thresh
-    for s, t in args.time_thresh:
-        if sec >= s:
-            th = t
-    return th
-
-
-def parse_time_thresh(raw: str):
-    """Parse 'sec:thresh,sec:thresh' → [(sec, thresh), ...]"""
-    if not raw:
-        return []
-    segments = []
-    for part in raw.split(","):
-        sec, th = part.strip().split(":")
-        segments.append((float(sec), float(th)))
-    segments.sort(key=lambda x: x[0])
-    return segments
-
-
-def parse_exclude_ids(raw: str) -> set:
-    if not raw:
-        return set()
-    return {int(x.strip()) for x in raw.split(",") if x.strip()}
+    if fps <= 0:
+        raise ConfigError("video FPS must be positive when --time-thresh is used")
+    threshold = args.thresh
+    for second, candidate in args.time_thresh:
+        if frame_idx / fps >= second:
+            threshold = candidate
+    return threshold

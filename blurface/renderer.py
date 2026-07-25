@@ -1,6 +1,7 @@
 """
 blurface.renderer — Blur and debug-draw operations.
 """
+
 import cv2
 import numpy as np
 
@@ -25,10 +26,18 @@ _CUDA_FALLBACK_WARNED = False
 
 # 12 distinct colors for debug track IDs
 PALETTE = [
-    (255, 80, 80), (80, 255, 80), (80, 80, 255),
-    (255, 255, 80), (255, 80, 255), (80, 255, 255),
-    (255, 160, 40), (160, 40, 255), (40, 255, 160),
-    (255, 120, 180), (120, 180, 255), (180, 255, 120),
+    (255, 80, 80),
+    (80, 255, 80),
+    (80, 80, 255),
+    (255, 255, 80),
+    (255, 80, 255),
+    (80, 255, 255),
+    (255, 160, 40),
+    (160, 40, 255),
+    (40, 255, 160),
+    (255, 120, 180),
+    (120, 180, 255),
+    (180, 255, 120),
 ]
 
 
@@ -37,16 +46,39 @@ def color_for(track_id: int):
     return PALETTE[track_id % len(PALETTE)]
 
 
-def apply_blur_cpu(frame: np.ndarray, bbox, kernel: int,
-                     mask_scale: float = 1.15, frame_w: int = 1920,
-                     frame_h: int = 1080) -> None:
+def _prepare_region(frame: np.ndarray, bbox, kernel: int, mask_scale: float):
+    if frame.ndim != 3 or frame.shape[2] != 3:
+        raise ValueError("frame must be a BGR image")
+    if kernel <= 0:
+        raise ValueError("blur kernel must be positive")
+    kernel = kernel if kernel % 2 else kernel + 1
+    if mask_scale < 1.0:
+        raise ValueError("mask scale must be at least 1")
+    values = np.asarray(bbox, dtype=float)
+    if values.shape != (4,) or not np.all(np.isfinite(values)):
+        raise ValueError("bounding box must contain four finite coordinates")
+    x1, x2 = sorted((values[0], values[2]))
+    y1, y2 = sorted((values[1], values[3]))
+    width, height = x2 - x1, y2 - y1
+    frame_h, frame_w = frame.shape[:2]
+    bx1 = max(0, int(np.floor(x1 - width * (mask_scale - 1) / 2)))
+    by1 = max(0, int(np.floor(y1 - height * (mask_scale - 1) / 2)))
+    bx2 = min(frame_w, int(np.ceil(x2 + width * (mask_scale - 1) / 2)))
+    by2 = min(frame_h, int(np.ceil(y2 + height * (mask_scale - 1) / 2)))
+    return bx1, by1, bx2, by2, kernel
+
+
+def apply_blur_cpu(
+    frame: np.ndarray,
+    bbox,
+    kernel: int,
+    mask_scale: float = 1.15,
+    frame_w: int = 1920,
+    frame_h: int = 1080,
+) -> None:
     """Apply Gaussian blur to a region of the frame (mutates in place)."""
-    x1, y1, x2, y2 = bbox
-    cw, ch = (x2 - x1), (y2 - y1)
-    bx1 = max(0, int(x1 - cw * (mask_scale - 1) / 2))
-    by1 = max(0, int(y1 - ch * (mask_scale - 1) / 2))
-    bx2 = min(frame_w, int(x2 + cw * (mask_scale - 1) / 2))
-    by2 = min(frame_h, int(y2 + ch * (mask_scale - 1) / 2))
+    del frame_w, frame_h  # retained for API compatibility
+    bx1, by1, bx2, by2, kernel = _prepare_region(frame, bbox, kernel, mask_scale)
     roi = frame[by1:by2, bx1:bx2]
     if roi.size > 0:
         h, w = roi.shape[:2]
@@ -58,30 +90,37 @@ def apply_blur_cpu(frame: np.ndarray, bbox, kernel: int,
             blurred = cv2.resize(small_blur, (w, h))
             # Downscaled mask
             mask = np.zeros((small_h, small_w), dtype=np.uint8)
-            cv2.ellipse(mask, (small_w // 2, small_h // 2),
-                        (small_w // 2, small_h // 2),
-                        0, 0, 360, 255, -1)
+            cv2.ellipse(
+                mask,
+                (small_w // 2, small_h // 2),
+                (small_w // 2, small_h // 2),
+                0,
+                0,
+                360,
+                255,
+                -1,
+            )
             mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
         else:
             # ── Gaussian (no downscale) ──
             blurred = cv2.GaussianBlur(roi, (kernel, kernel), 0)
             mask = np.zeros((h, w), dtype=np.uint8)
-            cv2.ellipse(mask, (w // 2, h // 2), (w // 2, h // 2),
-                        0, 0, 360, 255, -1)
+            cv2.ellipse(mask, (w // 2, h // 2), (w // 2, h // 2), 0, 0, 360, 255, -1)
         roi[:] = np.where(mask[:, :, None] == 255, blurred, roi)
         frame[by1:by2, bx1:bx2] = roi
 
 
-def apply_blur_gpu(frame: np.ndarray, bbox, kernel: int,
-                   mask_scale: float = 1.15, frame_w: int = 1920,
-                   frame_h: int = 1080) -> None:
+def apply_blur_gpu(
+    frame: np.ndarray,
+    bbox,
+    kernel: int,
+    mask_scale: float = 1.15,
+    frame_w: int = 1920,
+    frame_h: int = 1080,
+) -> None:
     """GPU-accelerated Gaussian blur via cv2.cuda (mutates in place)."""
-    x1, y1, x2, y2 = bbox
-    cw, ch = (x2 - x1), (y2 - y1)
-    bx1 = max(0, int(x1 - cw * (mask_scale - 1) / 2))
-    by1 = max(0, int(y1 - ch * (mask_scale - 1) / 2))
-    bx2 = min(frame_w, int(x2 + cw * (mask_scale - 1) / 2))
-    by2 = min(frame_h, int(y2 + ch * (mask_scale - 1) / 2))
+    del frame_w, frame_h
+    bx1, by1, bx2, by2, kernel = _prepare_region(frame, bbox, kernel, mask_scale)
     roi = frame[by1:by2, bx1:bx2]
     if roi.size == 0:
         return
@@ -94,37 +133,53 @@ def apply_blur_gpu(frame: np.ndarray, bbox, kernel: int,
         gpu_roi.upload(roi)
         gpu_small = cv2.cuda.resize(gpu_roi, (small_w, small_h))
         gpu_filter = cv2.cuda.createGaussianFilter(
-            gpu_small.type(), -1,
-            (kernel // 2 | 1, kernel // 2 | 1), 0,
+            gpu_small.type(),
+            -1,
+            (kernel // 2 | 1, kernel // 2 | 1),
+            0,
         )
         gpu_blur_small = gpu_filter.apply(gpu_small)
         gpu_blurred = cv2.cuda.resize(gpu_blur_small, (w, h))
         blurred = gpu_blurred.download()
         # Mask on CPU (cv2.cuda has no drawing primitives)
         mask = np.zeros((small_h, small_w), dtype=np.uint8)
-        cv2.ellipse(mask, (small_w // 2, small_h // 2),
-                    (small_w // 2, small_h // 2),
-                    0, 0, 360, 255, -1)
+        cv2.ellipse(
+            mask,
+            (small_w // 2, small_h // 2),
+            (small_w // 2, small_h // 2),
+            0,
+            0,
+            360,
+            255,
+            -1,
+        )
         mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
     else:
         gpu_roi = cv2.cuda_GpuMat()
         gpu_roi.upload(roi)
         gpu_filter = cv2.cuda.createGaussianFilter(
-            gpu_roi.type(), -1, (kernel, kernel), 0,
+            gpu_roi.type(),
+            -1,
+            (kernel, kernel),
+            0,
         )
         blurred = gpu_filter.apply(gpu_roi).download()
         mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.ellipse(mask, (w // 2, h // 2), (w // 2, h // 2),
-                    0, 0, 360, 255, -1)
+        cv2.ellipse(mask, (w // 2, h // 2), (w // 2, h // 2), 0, 0, 360, 255, -1)
 
     roi[:] = np.where(mask[:, :, None] == 255, blurred, roi)
     frame[by1:by2, bx1:bx2] = roi
 
 
 # ── Dispatch: use GPU if available, else CPU ──
-def apply_blur(frame: np.ndarray, bbox, kernel: int,
-               mask_scale: float = 1.15, frame_w: int = 1920,
-               frame_h: int = 1080) -> None:
+def apply_blur(
+    frame: np.ndarray,
+    bbox,
+    kernel: int,
+    mask_scale: float = 1.15,
+    frame_w: int = 1920,
+    frame_h: int = 1080,
+) -> None:
     """Apply blur using GPU if available, falling back to CPU."""
     global HAS_CUDA, _CUDA_FALLBACK_WARNED
 
@@ -132,7 +187,7 @@ def apply_blur(frame: np.ndarray, bbox, kernel: int,
         try:
             apply_blur_gpu(frame, bbox, kernel, mask_scale, frame_w, frame_h)
             return
-        except cv2.error as exc:
+        except (cv2.error, AttributeError) as exc:
             HAS_CUDA = False
             if not _CUDA_FALLBACK_WARNED:
                 print(f"[Renderer] OpenCV CUDA failed, falling back to CPU: {exc}")
@@ -141,8 +196,13 @@ def apply_blur(frame: np.ndarray, bbox, kernel: int,
     apply_blur_cpu(frame, bbox, kernel, mask_scale, frame_w, frame_h)
 
 
-def draw_debug_box(frame: np.ndarray, bbox, track_id: int,
-                   is_predicted: bool = False, is_excluded: bool = False) -> None:
+def draw_debug_box(
+    frame: np.ndarray,
+    bbox,
+    track_id: int,
+    is_predicted: bool = False,
+    is_excluded: bool = False,
+) -> None:
     """Draw colored box + ID label on frame (mutates in place).
     Predicted tracks get dashed boxes with 'PRED' label.
     Excluded tracks get a green 'KEPT' label.

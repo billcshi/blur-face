@@ -1,28 +1,42 @@
 @echo off
-REM ===========================================
-REM blur-face batch processor
-REM Put this .bat in the same folder as your videos
-REM Drag a video onto it, or double-click to process all videos
-REM ===========================================
-setlocal enabledelayedexpansion
+setlocal
+cd /d "%~dp0"
 
-set SCRIPT=%~dp0blur-face.py
-set OUTPUT_DIR=%~dp0blurred
-
+set "BLUR_FACE=%~dp0.venv\Scripts\blur-face.exe"
+set "OUTPUT_DIR=%~dp0blurred"
+if not exist "%BLUR_FACE%" (
+    echo [ERROR] blur-face is not installed. Run init.bat first.
+    exit /b 1
+)
 if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%"
 
-if "%~1"=="" (
-    echo Processing all videos in current folder...
-    for %%f in (*.mp4 *.mov *.mkv *.avi *.MP4 *.MOV *.MKV *.AVI) do (
-        echo [%%f]
-        python "%SCRIPT%" "%%f" -o "%OUTPUT_DIR%\%%f" %*
-        echo.
-    )
-) else (
-    echo Processing: %~nx1
-    python "%SCRIPT%" "%~1" -o "%OUTPUT_DIR%\%~nx1" %2 %3 %4 %5 %6 %7 %8 %9
-)
+if not "%~1"=="" goto ONE
 
-echo.
-echo Done! Output in: %OUTPUT_DIR%
-pause
+set "FAILED=0"
+for %%f in (*.mp4 *.mov *.mkv *.avi) do (
+    echo [%%f]
+    "%BLUR_FACE%" "%%f" -o "%OUTPUT_DIR%\%%~nxf.mp4"
+    if errorlevel 1 set "FAILED=1"
+)
+if "%FAILED%"=="1" (
+    echo [ERROR] One or more videos failed.
+    exit /b 1
+)
+echo Done. Output: %OUTPUT_DIR%
+exit /b 0
+
+:ONE
+set "INPUT=%~1"
+set "OUTPUT_NAME=%~nx1.mp4"
+set "ARGS="
+shift
+:ONE_ARGS
+if "%~1"=="" goto RUN_ONE
+set "ARGS=%ARGS% "%~1""
+shift
+goto ONE_ARGS
+
+:RUN_ONE
+"%BLUR_FACE%" "%INPUT%" -o "%OUTPUT_DIR%\%OUTPUT_NAME%" %ARGS%
+if errorlevel 1 exit /b 1
+echo Done. Output: %OUTPUT_DIR%\%OUTPUT_NAME%

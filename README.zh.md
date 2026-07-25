@@ -1,170 +1,126 @@
 # blur-face
 
-**基于 YOLO + 自研跟踪器的人脸自动打码工具 — 跨帧跟踪、遮挡预测、无闪烁、无漏帧。**
+面向隐私场景的本地视频人脸检测、跟踪和模糊工具。
 
-> English version: [README.md](README.md)
+blur-face 每帧运行 YOLO 人脸检测，并通过保守的多人跟踪、短时光流补偿和
+原子 FFmpeg 输出降低漏糊与损坏输出的风险。处理失败时程序会明确返回错误，
+不会把不存在或不完整的输出报告为成功。
 
-## 这个项目为什么存在
+## 隐私与联网行为
 
-我写这个工具的初衷是给**自己的情色视频打码**，然后分享给伴侣。因此每一个设计决策都把隐私和本地执行放在首位：
+- 视频帧的解码、检测、模糊和编码全部在本机完成；逐帧处理循环不会上传视频，
+  也不会主动发起网络请求。
+- 如果本地缺少模型，模型初始化阶段可能在解码第一帧之前下载 YOLO 模型。
+- 使用 `--offline` 可要求模型必须已经存在，并禁用上述自动下载路径。
+- 任何自动检测器都无法保证找到所有人脸。分享敏感视频前必须人工审查成品。
 
-- **100% 本地运行** — 不上传、不联网、不收集数据。所有处理都在你自己的机器上完成
-- **完全开源 (MIT)** — 每一行代码都可以审查，可以自己编译运行
-- **零外部 tracker 依赖** — 不使用 supervision、不使用 ultralytics 内置 tracker，不会被第三方库的版本变更影响
-- **iPhone 兼容输出** — 视频始终在你自己的设备上，不经过任何云服务
+## 安装
 
-如果你需要处理私密内容，你需要一个能完全信任的工具。不是 SaaS。不是黑盒 App。而是一个可以审计、可以离线跑、可以自己验证的开源工具。
-
-## 为什么不用现有的工具
-
-市面上已有的人脸打码工具（如 deface）逐帧独立检测，存在几个痛点：
-
-| 问题 | 表现 |
-|------|------|
-| 无跨帧跟踪 | 模糊框每帧重新计算，大小位置跳动，视觉上像在"跳舞" |
-| 遮挡漏帧 | 转头、手挡、侧脸的几帧检测不到 → 突然露脸 |
-| 无法微调 | 一个阈值跑全程，暗光/强光/远脸通用性差 |
-| 无法选择性打码 | 所有脸都糊，不能指定"这张脸不打码" |
-
-blur-face 的核心设计就是解决这四个问题。
-
-## 核心设计
-
-```
-视频帧 → YOLO人脸检测 → 自研FaceTracker（跟踪+预测）→ 模糊/标注 → ffmpeg编码H.264
-                              │
-                ┌─────────────┼─────────────┐
-                │ • 质心距离匹配检测框→已有轨迹   │
-                │ • EMA指数平滑坐标（不跳变）     │
-                │ • 检测不到时保留旧位置（预测）   │
-                │ • 超过N帧未检测到→删除轨迹      │
-                └─────────────────────────────┘
-```
-
-**关键设计决策：每帧都调用 tracker.update()，包括空检测。**
-
-市面上其他工具（包括 deface 的 supervision ByteTrack、ultralytics 的 model.track()）在检测为空时会跳过 tracker，导致遮挡帧无输出。blur-face 的自研 tracker 无论 YOLO 有没有检测到脸，都继续维护所有轨迹——检测不到就用上一帧位置继续模糊。
-
-## 跟 deface 的对比
-
-| | deface | blur-face |
-|---|---|---|
-| 检测模型 | SCRFD（固定） | YOLO（可换模型） |
-| 跨帧跟踪 | ❌ 逐帧独立 | ✅ 自研 tracker |
-| 遮挡预测 | ❌ 漏检就露脸 | ✅ 保留位置继续糊 |
-| 坐标平滑 | ❌ 每帧跳动 | ✅ EMA 指数平滑 |
-| Debug 审查 | ❌ | ✅ `--debug` 彩色框+ID |
-| 选择性排除 | ❌ | ✅ `--exclude-ids 2,5` |
-| 按时间调阈值 | ❌ | ✅ `--time-thresh "0:0.15,120:0.3"` |
-| iPhone 兼容 | ⚠️ | ✅ H.264+AAC+faststart |
-| 外部依赖 | ONNX + supervision | 零外部 tracker 依赖 |
-
-## 快速开始
+需要 Python 3.10 或更高版本。
 
 ```bash
-# Windows — 双击或运行
-init.bat
-
 # Linux / macOS
-chmod +x init.sh && ./init.sh
+chmod +x init.sh
+./init.sh
+
+# Windows
+init.bat
 ```
 
-这会安装 Python 依赖并下载人脸检测模型到 `models/` 目录。
+安装脚本会创建隔离的 `.venv`，安装 `requirements.lock` 中经过测试的直接依赖，
+并下载两个模型。模型通过固定的 SHA-256 校验，只有完整下载成功后才会替换目标文件。
+
+## 使用
 
 ```bash
-# Debug 模式：看每个人脸的跟踪ID（用于审查）
-python blur-face.py video.mov --debug
+# Linux / macOS
+.venv/bin/blur-face input.mov -o output.mp4
 
-# 打码全部人脸
-python blur-face.py video.mov -o output.mp4
+# Windows
+.venv\Scripts\blur-face.exe input.mov -o output.mp4
 
-# 排除特定人脸（ID 2 和 5 不打码）
-python blur-face.py video.mov --exclude-ids 2,5
+# 严格离线初始化；模型缺失时直接失败
+.venv/bin/blur-face input.mov -o output.mp4 --offline
 
-# 不同时间段用不同阈值（前2分钟暗光低阈值，后面正常）
-python blur-face.py video.mov --time-thresh "0:0.15,120:0.3"
+# 指定支持 NVENC 的 Windows FFmpeg
+.venv\Scripts\blur-face.exe input.mov -o output.mp4 --ffmpeg C:\ffmpeg\bin\ffmpeg.exe
+
+# 只画出保守覆盖区域，不模糊
+.venv/bin/blur-face input.mov --debug -o review.mp4
+
+# 按时间调整检测阈值
+.venv/bin/blur-face input.mov --time-thresh "0:0.15,120:0.3"
 ```
 
-## 微调选项
+在当前 Python 环境已经安装依赖时，原有的
+`python blur-face.py ...` 入口仍然可用。
 
-所有参数都有合理的默认值，但你可以精细控制：
+## 关键安全语义
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--model` | 人脸检测模型 | `yolov11m-face.pt` |
-| `--thresh` | 检测置信度阈值（越低越敏感，漏脸更少但误检更多） | `0.2` |
-| `--time-thresh` | 分时间段阈值，格式 `"秒:阈值,秒:阈值"` | 无 |
-| `--mask-scale` | 模糊区域相对于检测框的放大倍数 | `1.15` |
-| `--blur-kernel` | 高斯模糊核大小（奇数，越大越模糊） | `51` |
-| `--smooth` | 坐标平滑系数 0-1（0=完全不动, 1=完全不平滑） | `0.7` |
-| `--lost-buffer` | 检测丢失后保留轨迹的帧数（约 60 帧 = 2 秒） | `60` |
-| `--exclude-ids` | 指定不打码的跟踪ID，逗号分隔 | 无 |
-| `--debug` | 审查模式：画彩色框+ID，不模糊 | 关 |
-| `--profile` | 显示各阶段耗时（检测/跟踪/模糊/编码） | 关 |
-| `--device` | `cuda` 或 `cpu` | `cuda`（自动降级） |
+对于当前已经检测到的人脸，最终渲染区域是“原始检测框”和“平滑跟踪框”的并集。
+因此平滑只能增加覆盖，不能用一个滞后的框替换当前检测结果。近景大脸默认不会被
+过滤；只有无效、极小或极端畸形的检测框会被丢弃。
 
-### 典型工作流
+`--exclude-ids` 只适合经过仔细审查的视频。Track ID 是临时运动轨迹，不是生物身份；
+人物交叉或重新检测时仍可能换 ID。除非同时传入 `--allow-unsafe-exclusions`
+明确接受风险，否则程序会拒绝运行；启用后仍会显示警告。
+
+输出首先写入目标目录中的隐藏临时文件。只有 FFmpeg 正常退出且输出非空时才会
+原子替换最终路径。中断或失败会删除临时文件并返回非零状态。已有输出默认不会
+被覆盖；只有显式传入 `--overwrite` 才会在新文件完整完成后替换旧文件。
+
+## 主要参数
+
+以 `blur-face --help` 为唯一权威来源。当前关键默认值如下：
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `--model` | `yolov11m-face.pt` | 本地路径或可下载模型名 |
+| `--thresh` | `0.3` | YOLO 置信度阈值，范围 0–1 |
+| `--mask-scale` | `1.35` | 在保守跟踪区域外继续扩大 |
+| `--blur-kernel` | `51` | 正数高斯核；偶数会自动变为奇数 |
+| `--lost-buffer` | `180` | 漏检后继续保留轨迹的帧数 |
+| `--smooth` | `0.7` | EMA 中当前检测框的权重 |
+| `--min-face-size` | `8` | 最小检测宽度和高度，单位像素 |
+| `--max-face-height-ratio` | `1.0` | 人脸高度相对画面高度的上限 |
+| `--preset` | `quality` | 光流计算策略 |
+| `--offline` | 关闭 | 模型缺失时禁止下载并直接失败 |
+| `--ffmpeg` | 系统/内置 | 显式指定 FFmpeg 可执行文件 |
+
+所有影响安全的数值参数都会在加载模型或启动编码器之前验证。
+
+## 模块结构
+
+```text
+CLI → AppConfig 校验 → VideoSource 输入探测
+                         ↓
+                     模型初始化
+                         ↓
+视频帧 → 检测 → 全局关联与光流 → 隐私覆盖区域
+                         ↓
+                   CPU/CUDA 渲染
+                         ↓
+               原子 FFmpeg 编码 → 成品
+```
+
+- `config.py`：类型化配置和约束
+- `video.py`：经过验证的视频输入生命周期
+- `detector.py`：本地优先的 YOLO 初始化
+- `tracker.py`：全局匹配、轨迹状态和保守覆盖
+- `renderer.py`：统一验证的 CPU/CUDA 模糊后端
+- `encoder.py`：真实 NVENC 探测、FFmpeg 错误检查和原子提交
+- `pipeline.py`：资源所有权和逐帧流程
+- `app.py`：进程级错误与退出码
+
+## 开发验证
 
 ```bash
-# 1. 先用 debug 模式看哪些脸需要打码
-python blur-face.py video.mov --debug
-
-# 2. 发现问题：开头光线暗，ID 3 偶尔漏检
-#    尾部 ID 2 是朋友的脸，不需要打码
-
-# 3. 精确控制
-python blur-face.py video.mov -o output.mp4 \
-    --time-thresh "0:0.15,45:0.2" \   # 前45秒暗光降阈值
-    --exclude-ids 2 \                  # 保留朋友的脸
-    --blur-kernel 71 \                 # 更重的模糊
-    --profile                          # 看性能数据
+python -m unittest discover -s tests -v
+python -m compileall -q blurface tests
 ```
 
-## 性能
-
-| GPU | 模型 | 视频 | 速度 |
-|-----|------|------|------|
-| RTX 3080 Ti | yolov11m-face.pt | 1080p 30fps | ~34fps（略慢于实时） |
-| RTX 3080 Ti | yolo26n-face.pt | 1080p 30fps | ~43fps（快于实时） |
-| CPU (i7-11700K) | yolov11m-face.pt | 1080p 30fps | ~6fps（5倍慢于实时） |
-
-可用模型（来自 [yolo-face releases](https://github.com/akanametov/yolo-face/releases)）：
-
-| 模型文件 | 大小 | 速度 | 推荐场景 |
-|---------|------|------|---------|
-| `yolo26n-face.pt` | 5.6 MB | 最快 | 光线好、正脸为主 |
-| `yolov10n-face.pt` | 5.5 MB | 快 | 快速预览 |
-| `yolov10s-face.pt` | 15.7 MB | 中等 | 平衡选择 |
-| `yolov11m-face.pt` | 38.6 MB | 较慢 | 侧脸、暗光、边缘脸（默认推荐） |
-| `yolov11l-face.pt` | 48.8 MB | 最慢 | 追求极致检测率 |
-
-## 项目结构
-
-```
-blur-face/
-├── blur-face.py          入口（流程编排）
-├── init.bat / init.sh    一键安装脚本
-├── blur-batch.bat        批量处理当前文件夹所有视频
-├── README.md             English
-├── README.zh.md          中文
-├── LICENSE               MIT
-└── blurface/             核心包
-    ├── cli.py            命令行参数解析
-    ├── detector.py       YOLO 人脸检测封装
-    ├── tracker.py        自研多目标人脸跟踪器
-    ├── renderer.py       模糊与 debug 标注
-    ├── encoder.py        ffmpeg H.264 编码管道
-    └── profiler.py       分阶段性能计时
-```
-
-每个模块职责单一、独立可测。tracker 完全自研，零外部依赖（不依赖 supervision、不依赖 ultralytics 内置 tracker）。
-
-## 依赖
-
-- Python 3.10+
-- CUDA GPU 推荐（CPU 也能跑，慢 5 倍）
-- `pip install ultralytics opencv-python imageio-ffmpeg numpy`
-- GPU 检测使用 PyTorch CUDA，GPU 编码使用 NVENC。GPU 模糊渲染还需要带 CUDA 的 OpenCV；普通 `opencv-python` wheel 会自动降级到 CPU 渲染。
+测试覆盖当前检测框兜底、近景人脸、与检测顺序无关的关联、陈旧光流失效、
+配置校验和 FFmpeg 失败处理。
 
 ## License
 

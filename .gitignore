@@ -1,3 +1,6 @@
 models/
+.venv/
+*.egg-info/
+.pytest_cache/
 __pycache__/
 *.pyc
