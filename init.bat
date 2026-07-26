@@ -1,65 +1,60 @@
 @echo off
-REM ==============================================
-REM  blur-face - init script (Windows)
-REM  Double-click to run
-REM ==============================================
-
+setlocal
 cd /d "%~dp0"
 
-echo ============================================
-echo   blur-face - Setup
-echo ============================================
-
-REM --- Check Python ---
 where python >nul 2>&1
-if %errorlevel% neq 0 goto ERR_PYTHON
-echo [OK] Python found
+if errorlevel 1 (
+    echo [ERROR] Python not found. Install Python 3.10 or newer.
+    exit /b 1
+)
 
-REM --- Install deps ---
-echo [1/3] Installing Python packages...
-pip install ultralytics opencv-python imageio-ffmpeg numpy
-if %errorlevel% neq 0 goto ERR_PIP
+echo [1/4] Creating isolated environment...
+python -m venv .venv
+if errorlevel 1 exit /b 1
+set "VENV_PYTHON=%CD%\.venv\Scripts\python.exe"
 
-REM --- CUDA ---
-echo [2/3] Checking CUDA...
-python -c "import torch; print('[OK] GPU:', torch.cuda.get_device_name(0)) if torch.cuda.is_available() else print('[WARN] CUDA not available - will use CPU')"
+echo [2/4] Selecting PyTorch compute backend...
+"%VENV_PYTHON%" -m pip install --upgrade pip
+if errorlevel 1 exit /b 1
 
-REM --- Download models ---
-echo [3/3] Downloading models...
+if /I "%BLUR_FACE_CPU_ONLY%"=="1" goto CPU_BACKEND
+where nvidia-smi >nul 2>&1
+if errorlevel 1 goto CPU_BACKEND
 
-if not exist models mkdir models
+rem Keep an already working CUDA PyTorch installation on repeated setup runs.
+"%VENV_PYTHON%" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)" >nul 2>&1
+if not errorlevel 1 goto CUDA_VERIFY
 
-if exist models\yolo26n-face.pt goto SKIP_NANO
-echo   Downloading yolo26n-face.pt ^(5.6 MB^)...
-powershell -Command "Invoke-WebRequest -Uri 'https://github.com/akanametov/yolo-face/releases/download/1.0.0/yolo26n-face.pt' -OutFile 'models\yolo26n-face.pt' -UseBasicParsing"
-if exist models\yolo26n-face.pt (echo     [OK]) else echo     [SKIP]
-goto AFTER_NANO
-:SKIP_NANO
-echo   [OK] yolo26n-face.pt exists
-:AFTER_NANO
+echo [GPU] NVIDIA driver detected; installing the tested CUDA 12.6 PyTorch wheel...
+"%VENV_PYTHON%" -m pip install --upgrade --force-reinstall -r requirements.cuda126.lock
+if errorlevel 1 goto ERR_CUDA
 
-if exist models\yolov11m-face.pt goto SKIP_MEDIUM
-echo   Downloading yolov11m-face.pt ^(38.6 MB^)...
-powershell -Command "Invoke-WebRequest -Uri 'https://github.com/akanametov/yolo-face/releases/download/1.0.0/yolov11m-face.pt' -OutFile 'models\yolov11m-face.pt' -UseBasicParsing"
-if exist models\yolov11m-face.pt (echo     [OK]) else echo     [SKIP]
-goto DONE
-:SKIP_MEDIUM
-echo   [OK] yolov11m-face.pt exists
+:CUDA_VERIFY
+"%VENV_PYTHON%" -c "import torch, sys; print('[GPU] torch', torch.__version__, '| runtime CUDA', torch.version.cuda, '|', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'UNAVAILABLE'); sys.exit(0 if torch.cuda.is_available() else 1)"
+if errorlevel 1 goto ERR_CUDA
+goto RUNTIME_DEPS
 
-:DONE
-echo ============================================
-echo   Setup complete.
-echo   Usage: python blur-face.py input.mov --debug
-echo ============================================
-pause
+:CPU_BACKEND
+echo [CPU] NVIDIA driver not selected; installing the standard PyTorch dependency.
+
+:RUNTIME_DEPS
+echo [3/4] Installing tested runtime dependencies...
+"%VENV_PYTHON%" -m pip install -r requirements.lock
+if errorlevel 1 exit /b 1
+"%VENV_PYTHON%" -m pip install --no-deps --editable .
+if errorlevel 1 exit /b 1
+
+echo [4/4] Downloading and verifying models...
+"%VENV_PYTHON%" scripts\download_models.py
+if errorlevel 1 exit /b 1
+
+echo.
+echo Setup complete.
+echo Run: .venv\Scripts\blur-face.exe input.mov -o output.mp4
 exit /b 0
 
-:ERR_PYTHON
-echo [ERROR] Python not found. Install from https://python.org
-pause
-exit /b 1
-
-:ERR_PIP
-echo [ERROR] Failed to install packages.
-pause
+:ERR_CUDA
+echo [ERROR] NVIDIA was detected, but the CUDA PyTorch verification failed.
+echo Update the NVIDIA driver or use the official PyTorch selector.
+echo To intentionally install CPU-only, run: set BLUR_FACE_CPU_ONLY=1 ^&^& init.bat
 exit /b 1

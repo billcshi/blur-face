@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blur Face — Local Studio</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0d10;
+      --panel: #13171c;
+      --panel-2: #191e25;
+      --line: #29313b;
+      --text: #f4f7f9;
+      --muted: #91a0ae;
+      --accent: #77e2b4;
+      --accent-2: #36bc8c;
+      --warn: #ffcf70;
+      --danger: #ff766f;
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 15% 0%, rgba(73, 181, 137, .14), transparent 34rem),
+        radial-gradient(circle at 100% 30%, rgba(60, 103, 160, .11), transparent 35rem),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    button, input, select { font: inherit; }
+    .shell { width: min(1440px, calc(100% - 32px)); margin: 0 auto; padding: 30px 0 44px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .mark {
+      width: 44px; height: 44px; border-radius: 14px;
+      display: grid; place-items: center; color: #07120e; font-weight: 900;
+      background: linear-gradient(145deg, #a2f1cf, #4ed29f);
+      box-shadow: 0 10px 30px rgba(57, 198, 145, .2);
+    }
+    h1 { font-size: clamp(22px, 3vw, 30px); margin: 0; letter-spacing: -.03em; }
+    .subtitle { color: var(--muted); margin-top: 3px; font-size: 13px; }
+    .header-tools { display: flex; align-items: center; gap: 10px; }
+    .language {
+      display: inline-flex; padding: 3px; border: 1px solid var(--line);
+      border-radius: 11px; background: rgba(19, 23, 28, .9);
+    }
+    .language button {
+      min-height: 28px; padding: 4px 9px; border-radius: 8px;
+      color: var(--muted); background: transparent; font-size: 11px;
+    }
+    .language button.active { color: #07130e; background: var(--accent); font-weight: 800; }
+    .local {
+      display: inline-flex; align-items: center; gap: 8px; padding: 8px 11px;
+      border: 1px solid rgba(119, 226, 180, .25); border-radius: 999px;
+      background: rgba(119, 226, 180, .07); color: var(--accent); font-size: 12px;
+    }
+    .local::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(360px, .92fr); gap: 18px; }
+    .card {
+      background: rgba(19, 23, 28, .94); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: 0 16px 45px rgba(0,0,0,.18); overflow: hidden;
+    }
+    .card-head { padding: 19px 21px; border-bottom: 1px solid var(--line); }
+    .card-head h2 { font-size: 15px; margin: 0; letter-spacing: .01em; }
+    .card-head p { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 5px 0 0; }
+    .body { padding: 20px; }
+    .field { margin-bottom: 16px; }
+    label { display: block; font-size: 12px; color: #c7d0d8; margin-bottom: 7px; }
+    .label-line { display: flex; align-items: center; gap: 6px; }
+    .help {
+      position: relative; display: inline-grid; place-items: center;
+      width: 16px; height: 16px; border: 1px solid #52606c; border-radius: 50%;
+      color: #aebbc5; font-size: 10px; font-weight: 800; cursor: help;
+    }
+    .help::after {
+      content: attr(data-tip); position: absolute; z-index: 20; left: 22px; top: -9px;
+      width: min(290px, 70vw); padding: 9px 11px; border: 1px solid #3b4651;
+      border-radius: 9px; background: #252d35; color: #e7edf1;
+      font: 11px/1.45 ui-sans-serif, system-ui, sans-serif;
+      box-shadow: 0 12px 30px rgba(0,0,0,.35); opacity: 0;
+      pointer-events: none; transform: translateY(4px); transition: .14s;
+    }
+    .help:hover::after, .help:focus::after { opacity: 1; transform: translateY(0); }
+    .path-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    input, select {
+      width: 100%; min-height: 42px; border-radius: 11px; border: 1px solid var(--line);
+      background: #0e1216; color: var(--text); padding: 9px 11px; outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus, select:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px rgba(54,188,140,.1); }
+    button {
+      border: 0; border-radius: 11px; min-height: 42px; padding: 9px 14px;
+      cursor: pointer; color: var(--text); background: #242c35; transition: transform .12s, background .12s, opacity .12s;
+    }
+    button:hover:not(:disabled) { transform: translateY(-1px); background: #303a45; }
+    button:disabled { cursor: not-allowed; opacity: .45; }
+    .presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-bottom: 20px; }
+    .preset {
+      text-align: left; padding: 12px; min-height: 84px; border: 1px solid var(--line); background: var(--panel-2);
+    }
+    .preset strong { display: block; font-size: 13px; margin-bottom: 5px; }
+    .preset span { display: block; font-size: 11px; color: var(--muted); line-height: 1.4; }
+    .preset.active { border-color: var(--accent-2); background: rgba(54,188,140,.09); }
+    .section-title { display: flex; align-items: center; justify-content: space-between; margin: 5px 0 13px; }
+    .section-title h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin: 0; }
+    .settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+    .settings .field { margin: 0; }
+    .switches { display: flex; flex-wrap: wrap; gap: 14px; margin: 18px 0; }
+    .check { display: inline-flex; align-items: center; gap: 8px; color: #c7d0d8; font-size: 12px; }
+    .check input { width: 16px; min-height: 16px; accent-color: var(--accent-2); }
+    .actions { display: grid; grid-template-columns: 1fr auto; gap: 9px; margin-top: 18px; }
+    .primary { background: linear-gradient(135deg, #55d5a5, #2fb57f); color: #07130e; font-weight: 800; }
+    .primary:hover:not(:disabled) { background: linear-gradient(135deg, #6ce1b4, #39c28b); }
+    .cancel { color: #ffd8d5; background: rgba(255,118,111,.12); border: 1px solid rgba(255,118,111,.22); }
+    .status-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .status { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 700; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #65717d; }
+    .status.running .dot, .status.starting .dot, .status.cancelling .dot { background: var(--warn); box-shadow: 0 0 0 5px rgba(255,207,112,.08); }
+    .status.completed .dot { background: var(--accent); box-shadow: 0 0 0 5px rgba(119,226,180,.08); }
+    .status.failed .dot, .status.cancelled .dot { background: var(--danger); }
+    .percent { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+    .track { width: 100%; height: 10px; background: #0d1115; border: 1px solid #232a32; border-radius: 999px; overflow: hidden; }
+    .bar { height: 100%; width: 0; background: linear-gradient(90deg, #31b37e, #83e9be); transition: width .3s ease; }
+    .frame-count { margin-top: 8px; color: var(--muted); font-size: 11px; text-align: right; }
+    .privacy-note {
+      display: flex; gap: 10px; padding: 12px 13px; margin: 18px 0;
+      border-radius: 12px; background: rgba(119,226,180,.06); border: 1px solid rgba(119,226,180,.13);
+      color: #b9c8c1; font-size: 11px; line-height: 1.55;
+    }
+    .terminal {
+      height: 470px; overflow: auto; margin: 0; padding: 15px;
+      background: #090c0f; border: 1px solid #212830; border-radius: 13px;
+      color: #aebbc5; font: 11px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .empty { color: #5f6b76; }
+    .toast {
+      position: fixed; right: 22px; bottom: 22px; max-width: min(420px, calc(100% - 44px));
+      padding: 12px 14px; background: #242b33; border: 1px solid #394450; border-radius: 12px;
+      box-shadow: 0 18px 50px rgba(0,0,0,.35); font-size: 12px; opacity: 0; transform: translateY(10px);
+      pointer-events: none; transition: .2s;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.error { border-color: rgba(255,118,111,.45); color: #ffd0cc; }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .terminal { height: 330px; }
+    }
+    @media (max-width: 580px) {
+      .shell { width: min(100% - 20px, 1440px); padding-top: 18px; }
+      header { align-items: flex-start; }
+      .local { display: none; }
+      .header-tools { align-items: flex-end; }
+      .presets, .settings { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="brand">
+        <div class="mark">BF</div>
+        <div>
+          <h1>Blur Face Local Studio</h1>
+          <div class="subtitle" data-i18n="subtitle">Local face privacy · Your video stays on your computer</div>
+        </div>
+      </div>
+      <div class="header-tools">
+        <div class="language" aria-label="Language">
+          <button data-lang-mode="auto">Auto</button>
+          <button data-lang-mode="en">EN</button>
+          <button data-lang-mode="zh">中文</button>
+        </div>
+        <div class="local">127.0.0.1 ONLY</div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section class="card">
+        <div class="card-head">
+          <h2 data-i18n="settingsTitle">Processing settings</h2>
+          <p data-i18n="settingsHelp">Choose a local video and privacy level. The UI uses the same pipeline as the CLI.</p>
+        </div>
+        <div class="body">
+          <div class="field">
+            <label for="input" class="label-line"><span data-i18n="inputLabel">Input video</span><span class="help" tabindex="0" data-help="inputHelp">?</span></label>
+            <div class="path-row">
+              <input id="input" placeholder="Choose a local video file" data-i18n-placeholder="inputPlaceholder">
+              <button id="pick-input" data-i18n="pickInput">Choose video</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="output" class="label-line"><span data-i18n="outputLabel">Output location</span><span class="help" tabindex="0" data-help="outputHelp">?</span></label>
+            <div class="path-row">
+              <input id="output" placeholder="Output MP4 path" data-i18n-placeholder="outputPlaceholder">
+              <button id="pick-output" data-i18n="pickOutput">Choose output</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="model" class="label-line"><span data-i18n="modelLabel">Local model</span><span class="help" tabindex="0" data-help="modelHelp">?</span></label>
+            <div class="path-row">
+              <select id="model"><option value="yolov11m-face.pt" data-i18n="modelsLoading">Loading local models…</option></select>
+              <button id="pick-model" data-i18n="pickModel">Choose model</button>
+            </div>
+          </div>
+
+          <div class="section-title"><h3 data-i18n="privacyPresets">Privacy presets</h3></div>
+          <div class="presets">
+            <button class="preset active" data-preset="standard">
+              <strong data-i18n="standard">Standard</strong><span data-i18n="standardHelp">Rounded rectangle · adaptive 101–251</span>
+            </button>
+            <button class="preset" data-preset="strong">
+              <strong data-i18n="strong">Strong</strong><span data-i18n="strongHelp">Wider coverage · adaptive 151–301</span>
+            </button>
+            <button class="preset" data-preset="strict">
+              <strong data-i18n="strict">Strict privacy</strong><span data-i18n="strictHelp">Full rectangle · fixed 301</span>
+            </button>
+          </div>
+
+          <div class="section-title"><h3 data-i18n="advanced">Advanced</h3></div>
+          <div class="settings">
+            <div class="field">
+              <label for="mask-shape" class="label-line"><span data-i18n="maskShape">Mask shape</span><span class="help" tabindex="0" data-help="maskShapeHelp">?</span></label>
+              <select id="mask-shape">
+                <option value="rounded-rect" data-i18n="roundedRect">Rounded rectangle (recommended)</option>
+                <option value="rectangle" data-i18n="rectangle">Full rectangle</option>
+                <option value="ellipse" data-i18n="ellipse">Ellipse (legacy)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="blur-strategy" class="label-line"><span data-i18n="blurStrategy">Blur strategy</span><span class="help" tabindex="0" data-help="blurStrategyHelp">?</span></label>
+              <select id="blur-strategy">
+                <option value="adaptive" data-i18n="adaptive">Confidence-adaptive</option>
+                <option value="fixed" data-i18n="fixed">Fixed strength</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="kernel-min" class="label-line"><span data-i18n="kernelMin">Minimum kernel</span><span class="help" tabindex="0" data-help="kernelMinHelp">?</span></label>
+              <input id="kernel-min" type="number" min="1" step="2" value="101">
+            </div>
+            <div class="field">
+              <label for="kernel-max" class="label-line"><span data-i18n="kernelMax">Maximum / fixed kernel</span><span class="help" tabindex="0" data-help="kernelMaxHelp">?</span></label>
+              <input id="kernel-max" type="number" min="1" step="2" value="251">
+            </div>
+            <div class="field">
+              <label for="mask-scale" class="label-line"><span data-i18n="maskScale">Mask coverage</span><span class="help" tabindex="0" data-help="maskScaleHelp">?</span></label>
+              <input id="mask-scale" type="number" min="1" max="3" step="0.05" value="1.5">
+            </div>
+            <div class="field">
+              <label for="threshold" class="label-line"><span data-i18n="threshold">Detection threshold</span><span class="help" tabindex="0" data-help="thresholdHelp">?</span></label>
+              <input id="threshold" type="number" min="0" max="1" step="0.05" value="0.3">
+            </div>
+            <div class="field">
+              <label for="min-face-size" class="label-line"><span data-i18n="minFaceSize">Minimum face size</span><span class="help" tabindex="0" data-help="minFaceSizeHelp">?</span></label>
+              <input id="min-face-size" type="number" min="1" step="1" value="30">
+            </div>
+            <div class="field">
+              <label for="tracking-preset" class="label-line"><span data-i18n="tracking">Tracking preset</span><span class="help" tabindex="0" data-help="trackingHelp">?</span></label>
+              <select id="tracking-preset">
+                <option value="quality">Quality</option>
+                <option value="fast">Fast</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="switches">
+            <label class="check"><input id="overwrite" type="checkbox" checked><span data-i18n="overwrite">Allow atomic overwrite</span><span class="help" tabindex="0" data-help="overwriteHelp">?</span></label>
+            <label class="check"><input id="offline" type="checkbox"><span data-i18n="offline">Require offline model</span><span class="help" tabindex="0" data-help="offlineHelp">?</span></label>
+            <label class="check"><input id="no-nvenc" type="checkbox"><span data-i18n="noNvenc">Disable NVENC</span><span class="help" tabindex="0" data-help="noNvencHelp">?</span></label>
+          </div>
+
+          <div class="actions">
+            <button class="primary" id="start" data-i18n="start">Start processing</button>
+            <button class="cancel" id="cancel" disabled data-i18n="cancel">Cancel</button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="card">
+        <div class="card-head">
+          <h2 data-i18n="jobStatus">Job status</h2>
+          <p data-i18n="jobHelp">Closing this page does not cancel the job. Use Cancel to stop safely and discard incomplete output.</p>
+        </div>
+        <div class="body">
+          <div class="status-row">
+            <div class="status idle" id="status"><span class="dot"></span><span id="status-text">Waiting</span></div>
+            <div class="percent" id="percent">0%</div>
+          </div>
+          <div class="track"><div class="bar" id="bar"></div></div>
+          <div class="frame-count" id="frames">0 / 0 frames</div>
+          <div class="privacy-note">
+            <span>◆</span>
+            <span data-i18n="privacyNote">This page connects only to the local service. Input and output are local paths; no video is uploaded.</span>
+          </div>
+          <pre class="terminal empty" id="logs">Waiting to start…</pre>
+        </div>
+      </aside>
+    </div>
+  </main>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const token = new URLSearchParams(location.search).get("token") || "";
+    const $ = (id) => document.getElementById(id);
+    const translations = {
+      en: {
+        title: "Blur Face — Local Studio",
+        subtitle: "Local face privacy · Your video stays on your computer",
+        settingsTitle: "Processing settings",
+        settingsHelp: "Choose a local video and privacy level. The UI uses the same pipeline as the CLI.",
+        inputLabel: "Input video", inputPlaceholder: "Choose a local video file", pickInput: "Choose video",
+        outputLabel: "Output location", outputPlaceholder: "Output MP4 path", pickOutput: "Choose output",
+        modelLabel: "Local model", modelsLoading: "Loading local models…", pickModel: "Choose model",
+        privacyPresets: "Privacy presets", standard: "Standard",
+        standardHelp: "Rounded rectangle · adaptive 101–251", strong: "Strong",
+        strongHelp: "Wider coverage · adaptive 151–301", strict: "Strict privacy",
+        strictHelp: "Full rectangle · fixed 301", advanced: "Advanced",
+        maskShape: "Mask shape", roundedRect: "Rounded rectangle (recommended)",
+        rectangle: "Full rectangle", ellipse: "Ellipse (legacy)",
+        blurStrategy: "Blur strategy", adaptive: "Confidence-adaptive", fixed: "Fixed strength",
+        kernelMin: "Minimum kernel", kernelMax: "Maximum / fixed kernel",
+        maskScale: "Mask coverage", threshold: "Detection threshold",
+        minFaceSize: "Minimum face size", tracking: "Tracking preset",
+        overwrite: "Allow atomic overwrite", offline: "Require offline model",
+        noNvenc: "Disable NVENC", start: "Start processing", cancel: "Cancel",
+        jobStatus: "Job status",
+        jobHelp: "Closing this page does not cancel the job. Use Cancel to stop safely and discard incomplete output.",
+        privacyNote: "This page connects only to the local service. Input and output are local paths; no video is uploaded.",
+        inputHelp: "The source video is read directly from this local path and is never uploaded.",
+        outputHelp: "The finished MP4 is written atomically to this local path.",
+        modelHelp: "Choose a .pt model found in a local model directory, or browse to another local model.",
+        maskShapeHelp: "Rounded rectangle keeps the full detected face box covered. Rectangle is strictest; ellipse preserves the legacy look.",
+        blurStrategyHelp: "Adaptive scales blur with detector confidence. Fixed uses the maximum kernel for every face.",
+        kernelMinHelp: "Weakest odd Gaussian kernel used by adaptive blur. Larger values hide more detail.",
+        kernelMaxHelp: "Strongest adaptive kernel, or the single kernel used in fixed mode.",
+        maskScaleHelp: "Expands coverage around each tracked face. 1.5 means 50% larger in width and height.",
+        thresholdHelp: "Lower values detect less-certain faces but may add false positives. Default: 0.3.",
+        minFaceSizeHelp: "Ignores detections smaller than this many pixels in either dimension. Default: 30.",
+        trackingHelp: "Quality favors conservative optical-flow tracking; Fast reduces tracking work.",
+        overwriteHelp: "Keeps the old file until the replacement is completely encoded, then swaps it atomically.",
+        offlineHelp: "Rejects a missing model instead of attempting a one-time model download before processing.",
+        noNvencHelp: "Forces software H.264 encoding even when FFmpeg reports working NVIDIA NVENC support.",
+        idle: "Waiting", starting: "Starting", running: "Processing",
+        cancelling: "Cancelling safely", cancelled: "Cancelled", completed: "Completed",
+        failed: "Failed", disconnected: "UI disconnected", waitingLog: "Waiting to start…",
+        startedToast: "Job started", cancellingToast: "Cancelling safely",
+        cancelConfirm: "Stop the current job and discard incomplete output?",
+        noModels: "No local .pt models found", frames: "frames"
+      },
+      zh: {
+        title: "Blur Face — 本地工作台",
+        subtitle: "本地人脸隐私处理 · 视频不会离开你的电脑",
+        settingsTitle: "处理设置",
+        settingsHelp: "选择本地视频和隐私级别。所有选项使用与 CLI 相同的处理管线。",
+        inputLabel: "输入视频", inputPlaceholder: "选择本机视频文件", pickInput: "选择视频",
+        outputLabel: "输出位置", outputPlaceholder: "输出 MP4 路径", pickOutput: "选择输出",
+        modelLabel: "本地模型", modelsLoading: "正在读取本地模型…", pickModel: "选择模型",
+        privacyPresets: "隐私预设", standard: "标准",
+        standardHelp: "圆角矩形 · 自适应 101–251", strong: "强力",
+        strongHelp: "更宽覆盖 · 自适应 151–301", strict: "严格隐私",
+        strictHelp: "完整矩形 · 固定 301", advanced: "高级参数",
+        maskShape: "遮挡形状", roundedRect: "圆角矩形（推荐）",
+        rectangle: "完整矩形", ellipse: "椭圆（兼容）",
+        blurStrategy: "模糊策略", adaptive: "按置信度自适应", fixed: "固定强度",
+        kernelMin: "最小 Kernel", kernelMax: "最大 / 固定 Kernel",
+        maskScale: "遮挡范围", threshold: "检测阈值",
+        minFaceSize: "最小人脸尺寸", tracking: "追踪策略",
+        overwrite: "允许原子覆盖输出", offline: "严格离线模型",
+        noNvenc: "禁用 NVENC", start: "开始处理", cancel: "取消",
+        jobStatus: "任务状态",
+        jobHelp: "关闭此页面不会取消任务；使用取消按钮可安全停止并放弃不完整输出。",
+        privacyNote: "网页只连接本机服务。输入和输出字段是本地路径，不会将视频上传到网页或远程服务器。",
+        inputHelp: "直接从这个本地路径读取源视频，视频不会上传。",
+        outputHelp: "完整编码成功后，成品 MP4 才会原子写入这个本地路径。",
+        modelHelp: "选择模型目录中发现的 .pt 模型，也可以浏览并选择其他本地模型。",
+        maskShapeHelp: "圆角矩形保证完整覆盖检测框；完整矩形最严格；椭圆用于兼容旧版外观。",
+        blurStrategyHelp: "自适应模式按检测置信度调整强度；固定模式对所有人脸使用最大 Kernel。",
+        kernelMinHelp: "自适应模糊使用的最小奇数高斯 Kernel；数值越大，隐藏细节越多。",
+        kernelMaxHelp: "自适应模式的最大 Kernel，也是固定模式使用的唯一 Kernel。",
+        maskScaleHelp: "扩大每个追踪人脸的遮挡范围；1.5 表示宽和高各扩大 50%。",
+        thresholdHelp: "调低可发现置信度较低的人脸，但可能增加误识别；默认 0.3。",
+        minFaceSizeHelp: "忽略任一边小于该像素值的检测结果；默认 30。",
+        trackingHelp: "Quality 使用更保守的光流追踪；Fast 减少追踪计算量。",
+        overwriteHelp: "新文件完整编码前保留旧文件，成功后再原子替换。",
+        offlineHelp: "本地缺少模型时直接失败，不在处理开始前尝试一次性下载。",
+        noNvencHelp: "即使 FFmpeg 检测到 NVIDIA NVENC，也强制使用软件 H.264 编码。",
+        idle: "等待任务", starting: "正在启动", running: "正在处理",
+        cancelling: "正在安全取消", cancelled: "已取消", completed: "处理完成",
+        failed: "处理失败", disconnected: "UI 连接中断", waitingLog: "等待开始处理…",
+        startedToast: "任务已启动", cancellingToast: "正在安全取消",
+        cancelConfirm: "停止当前任务并放弃未完成的输出？",
+        noModels: "没有找到本地 .pt 模型", frames: "帧"
+      }
+    };
+    function browserLanguage() {
+      const languages = navigator.languages || [navigator.language || "en"];
+      const supported = languages.find(value => /^(zh|en)(-|$)/i.test(value));
+      return supported && supported.toLowerCase().startsWith("zh") ? "zh" : "en";
+    }
+    let languageMode = localStorage.getItem("blur-face-language") || "auto";
+    if (!["auto", "en", "zh"].includes(languageMode)) languageMode = "auto";
+    let currentLanguage = languageMode === "auto" ? browserLanguage() : languageMode;
+    let lastStatus = "idle";
+    const t = (key) => translations[currentLanguage][key] || translations.en[key] || key;
+    function applyLanguage() {
+      currentLanguage = languageMode === "auto" ? browserLanguage() : languageMode;
+      document.documentElement.lang = currentLanguage === "zh" ? "zh-CN" : "en";
+      document.title = t("title");
+      document.querySelectorAll("[data-i18n]").forEach(node => {
+        node.textContent = t(node.dataset.i18n);
+      });
+      document.querySelectorAll("[data-i18n-placeholder]").forEach(node => {
+        node.placeholder = t(node.dataset.i18nPlaceholder);
+      });
+      document.querySelectorAll("[data-help]").forEach(node => {
+        node.dataset.tip = t(node.dataset.help);
+        node.setAttribute("aria-label", t(node.dataset.help));
+      });
+      document.querySelectorAll("[data-lang-mode]").forEach(node => {
+        node.classList.toggle("active", node.dataset.langMode === languageMode);
+      });
+      $("status-text").textContent = t(lastStatus);
+      if (!$("logs").textContent.trim() || $("logs").classList.contains("empty")) {
+        $("logs").textContent = t("waitingLog");
+      }
+    }
+    document.querySelectorAll("[data-lang-mode]").forEach(button => {
+      button.addEventListener("click", () => {
+        languageMode = button.dataset.langMode;
+        localStorage.setItem("blur-face-language", languageMode);
+        applyLanguage();
+      });
+    });
+    const presets = {
+      standard: { shape: "rounded-rect", strategy: "adaptive", min: 101, max: 251, scale: 1.5 },
+      strong: { shape: "rounded-rect", strategy: "adaptive", min: 151, max: 301, scale: 1.65 },
+      strict: { shape: "rectangle", strategy: "fixed", min: 301, max: 301, scale: 1.5 }
+    };
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        ...options,
+        headers: { "X-Blur-Face-Token": token, "Content-Type": "application/json", ...(options.headers || {}) }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      return data;
+    }
+    function toast(message, error = false) {
+      const node = $("toast");
+      node.textContent = message;
+      node.className = `toast show${error ? " error" : ""}`;
+      clearTimeout(toast.timer);
+      toast.timer = setTimeout(() => node.className = "toast", 3200);
+    }
+    function applyPreset(name) {
+      const p = presets[name];
+      $("mask-shape").value = p.shape;
+      $("blur-strategy").value = p.strategy;
+      $("kernel-min").value = p.min;
+      $("kernel-max").value = p.max;
+      $("mask-scale").value = p.scale;
+      document.querySelectorAll(".preset").forEach(x => x.classList.toggle("active", x.dataset.preset === name));
+    }
+    document.querySelectorAll(".preset").forEach(button => {
+      button.addEventListener("click", () => applyPreset(button.dataset.preset));
+    });
+    ["mask-shape", "blur-strategy", "kernel-min", "kernel-max", "mask-scale"].forEach(id => {
+      $(id).addEventListener("change", () => document.querySelectorAll(".preset").forEach(x => x.classList.remove("active")));
+    });
+
+    function addModelOption(path, selected = false) {
+      let option = Array.from($("model").options).find(node => node.value === path);
+      if (!option) {
+        option = document.createElement("option");
+        option.value = path;
+        option.textContent = path.split(/[\\/]/).pop();
+        option.title = path;
+        $("model").appendChild(option);
+      }
+      if (selected) $("model").value = path;
+    }
+    async function loadModels() {
+      try {
+        const data = await api("/api/models");
+        $("model").replaceChildren();
+        if (!data.models.length) {
+          addModelOption("yolov11m-face.pt", true);
+          $("model").options[0].dataset.i18n = "noModels";
+          $("model").options[0].textContent = t("noModels");
+        } else {
+          data.models.forEach(path => addModelOption(path));
+          const preferred = data.models.find(path => /yolov11m-face\.pt$/i.test(path));
+          $("model").value = preferred || data.models[0];
+        }
+      } catch (e) { toast(e.message, true); }
+    }
+    $("pick-input").addEventListener("click", async () => {
+      try {
+        const data = await api("/api/pick-input", {
+          method: "POST", body: JSON.stringify({ language: currentLanguage })
+        });
+        if (data.path) {
+          $("input").value = data.path;
+          if (!$("output").value) $("output").value = data.suggested_output;
+        }
+      } catch (e) { toast(e.message, true); }
+    });
+    $("pick-output").addEventListener("click", async () => {
+      try {
+        const data = await api("/api/pick-output", {
+          method: "POST", body: JSON.stringify({ language: currentLanguage })
+        });
+        if (data.path) $("output").value = data.path;
+      } catch (e) { toast(e.message, true); }
+    });
+    $("pick-model").addEventListener("click", async () => {
+      try {
+        const data = await api("/api/pick-model", {
+          method: "POST", body: JSON.stringify({ language: currentLanguage })
+        });
+        if (data.path) addModelOption(data.path, true);
+      } catch (e) { toast(e.message, true); }
+    });
+    $("start").addEventListener("click", async () => {
+      const payload = {
+        input: $("input").value.trim(),
+        output: $("output").value.trim(),
+        model: $("model").value,
+        overwrite: $("overwrite").checked,
+        threshold: Number($("threshold").value),
+        mask_scale: Number($("mask-scale").value),
+        mask_shape: $("mask-shape").value,
+        blur_strategy: $("blur-strategy").value,
+        blur_kernel_min: Number($("kernel-min").value),
+        blur_kernel: Number($("kernel-max").value),
+        min_face_size: Number($("min-face-size").value),
+        preset: $("tracking-preset").value,
+        offline: $("offline").checked,
+        no_nvenc: $("no-nvenc").checked
+      };
+      try {
+        await api("/api/start", { method: "POST", body: JSON.stringify(payload) });
+        toast(t("startedToast"));
+        await refresh();
+      } catch (e) { toast(e.message, true); }
+    });
+    $("cancel").addEventListener("click", async () => {
+      if (!confirm(t("cancelConfirm"))) return;
+      try {
+        await api("/api/cancel", { method: "POST", body: "{}" });
+        toast(t("cancellingToast"));
+      } catch (e) { toast(e.message, true); }
+    });
+
+    let previousLog = "";
+    async function refresh() {
+      try {
+        const data = await api("/api/status");
+        const running = ["starting", "running", "cancelling"].includes(data.status);
+        lastStatus = data.status;
+        $("status").className = `status ${data.status}`;
+        $("status-text").textContent = t(data.status);
+        $("percent").textContent = `${data.progress}%`;
+        $("bar").style.width = `${data.progress}%`;
+        $("frames").textContent = `${data.current} / ${data.total} ${t("frames")}`;
+        $("start").disabled = running;
+        $("cancel").disabled = !["starting", "running"].includes(data.status);
+        const logText = data.logs.join("\n");
+        if (logText !== previousLog) {
+          previousLog = logText;
+          $("logs").textContent = logText || t("waitingLog");
+          $("logs").classList.toggle("empty", !logText);
+          $("logs").scrollTop = $("logs").scrollHeight;
+        }
+      } catch (e) {
+        $("status-text").textContent = t("disconnected");
+      }
+    }
+    applyLanguage();
+    loadModels();
+    refresh();
+    setInterval(refresh, 700);
+  </script>
+</body>
+</html>

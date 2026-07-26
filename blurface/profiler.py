@@ -1,6 +1,7 @@
 """
 blurface.profiler — Lightweight per-phase timing.
 """
+
 import time
 from collections import defaultdict
 
@@ -10,7 +11,7 @@ class Profiler:
 
     Usage:
         prof = Profiler()
-        with prof("detect"):
+        with prof.phase("detect"):
             ...  # expensive work
         prof.summary(total_frames, total_wall)
     """
@@ -38,7 +39,8 @@ class Profiler:
         for ph in self._order:
             avg_ms = (self.times[ph] / frames) * 1000
             pct = (self.times[ph] / total_wall * 100) if total_wall > 0 else 0
-            bar = "█" * int(pct / 2) + "░" * (50 - int(pct / 2))
+            filled = min(50, max(0, int(pct / 2)))
+            bar = "#" * filled + "-" * (50 - filled)
             lines.append(f"  {ph:8s}  {avg_ms:7.2f}ms  ({pct:5.1f}%)  {bar}")
         return "\n".join(lines)
 
@@ -49,8 +51,8 @@ class _PhaseTimer:
         self._name = name
 
     def __enter__(self):
-        self._t0 = time.time()
+        self._t0 = time.perf_counter()
         return self
 
     def __exit__(self, *args):
-        self._times[self._name] += time.time() - self._t0
+        self._times[self._name] += time.perf_counter() - self._t0
