@@ -1,4 +1,4 @@
-"""Local-first model resolution with verified downloads for bundled models."""
+"""Local-first model resolution with verified downloads for supported models."""
 
 from __future__ import annotations
 
@@ -7,14 +7,20 @@ import os
 from pathlib import Path
 from urllib.request import urlopen
 
+OPTIONAL_YOLO_MODELS = frozenset({"yolov11m-face.pt"})
+
 MODEL_SPECS = {
-    "yolo26n-face.pt": (
+    "face_detection_yunet_2023mar.onnx": (
         (
-            "https://github.com/akanametov/yolo-face/releases/download/1.0.0/"
-            "yolo26n-face.pt"
+            "https://github.com/opencv/opencv_zoo/raw/"
+            "f12e12798e8314f7c074a6656816c048dcc95b7a/models/"
+            "face_detection_yunet/face_detection_yunet_2023mar.onnx"
         ),
-        "c6a5405127a2e351292315a6a8084ea3e790dbec25b9d16a8e80d1e3f866efe1",
+        "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
     ),
+    # Optional only. This third-party weight comes from a fork of Ultralytics
+    # and is not part of the MIT default runtime. It is downloaded only by the
+    # explicit YOLO installer after its upstream license notice is accepted.
     "yolov11m-face.pt": (
         (
             "https://github.com/akanametov/yolo-face/releases/download/1.0.0/"
@@ -96,8 +102,7 @@ def resolve_model(
         destination = directories[0] if directories else Path.cwd() / "models"
         return str(download_model(name, destination))
     if allow_download:
-        # Preserve Ultralytics' own download support for its official model names.
-        return str(path)
+        raise ValueError(f"no verified download is configured for model: {name}")
     raise FileNotFoundError(
         f"model not found locally: {path} (remove --offline to allow download)"
     )

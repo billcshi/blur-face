@@ -1,0 +1,5 @@
+# Optional SAM 2.1 high-quality mask engine.
+# Install only after the normal init script has created .venv.
+pillow==12.3.0
+safetensors==0.8.0
+transformers==5.14.1

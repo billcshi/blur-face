@@ -15,20 +15,31 @@ class AppConfig:
     input: Path
     output: Path = Path("output_blur.mp4")
     overwrite: bool = False
-    model: str = "yolov11m-face.pt"
+    detector: str = "yunet"
+    model: str = "face_detection_yunet_2023mar.onnx"
     threshold: float = 0.3
     time_thresholds: tuple[tuple[float, float], ...] = ()
     mask_scale: float = 1.5
     mask_shape: str = "rounded-rect"
+    mask_engine: str = "geometric"
+    sam_mask_expansion: float = 0.12
+    segmentation_combine: str = "union"
+    sam2_model: str = "facebook/sam2.1-hiera-base-plus"
+    sam2_refresh_interval: int = 15
+    temporal_stabilization: bool = True
+    backfill_frames: int = 10
+    release_hold_frames: int = 5
+    scene_cut_sensitivity: float = 0.55
+    temporal_storage_limit_mb: int = 4096
     blur_strategy: str = "adaptive"
     blur_kernel: int = 251
     blur_kernel_min: int = 101
-    device: str = "cuda"
+    device: str = "auto"
     ffmpeg: Path | None = None
+    job_temp_dir: Path | None = None
     debug: bool = False
+    mask_preview: bool = False
     profile: bool = False
-    exclude_ids: frozenset[int] = frozenset()
-    allow_unsafe_exclusions: bool = False
     lost_buffer: int = 180
     smooth: float = 0.7
     preset: str = "quality"
@@ -50,6 +61,13 @@ class AppConfig:
             raise ConfigError("output already exists; use --overwrite to replace it")
         if not self.model.strip():
             raise ConfigError("--model cannot be empty")
+        if self.detector not in {"yunet", "yolo"}:
+            raise ConfigError("--detector must be yunet or yolo")
+        model_suffix = Path(self.model).suffix.lower()
+        if self.detector == "yunet" and model_suffix != ".onnx":
+            raise ConfigError("--detector yunet requires an ONNX --model")
+        if self.detector == "yolo" and model_suffix != ".pt":
+            raise ConfigError("--detector yolo requires a .pt --model")
         if not 0.0 <= self.threshold <= 1.0:
             raise ConfigError("--thresh must be between 0 and 1")
         for second, threshold in self.time_thresholds:
@@ -63,6 +81,36 @@ class AppConfig:
             raise ConfigError(
                 "--mask-shape must be rounded-rect, rectangle, or ellipse"
             )
+        if self.mask_engine not in {"geometric", "sam2.1"}:
+            raise ConfigError(
+                "--mask-engine must be geometric or sam2.1"
+            )
+        if self.mask_engine == "sam2.1" and not self.sam2_model.strip():
+            raise ConfigError("--sam2-model is required by --mask-engine sam2.1")
+        if self.sam2_refresh_interval <= 0:
+            raise ConfigError("--sam2-refresh-interval must be positive")
+        if not 0 <= self.backfill_frames <= 60:
+            raise ConfigError("--backfill-frames must be between 0 and 60")
+        if not 0 <= self.release_hold_frames <= 12:
+            raise ConfigError("--release-hold-frames must be between 0 and 12")
+        if not 0.0 <= self.scene_cut_sensitivity <= 1.0:
+            raise ConfigError(
+                "--scene-cut-sensitivity must be between 0 and 1"
+            )
+        if self.temporal_storage_limit_mb < 64:
+            raise ConfigError(
+                "--temporal-storage-limit-mb must be at least 64"
+            )
+        if not 0.0 <= self.sam_mask_expansion <= 0.5:
+            raise ConfigError("--sam-mask-expansion must be between 0 and 0.5")
+        if self.segmentation_combine not in {
+            "union",
+            "intersection",
+            "mask-only",
+        }:
+            raise ConfigError(
+                "--segmentation-combine must be union, intersection, or mask-only"
+            )
         if self.blur_kernel <= 0:
             raise ConfigError("--blur-kernel must be positive")
         if self.blur_kernel_min <= 0:
@@ -74,12 +122,18 @@ class AppConfig:
             raise ConfigError("--blur-kernel-min cannot exceed --blur-kernel")
         if self.blur_strategy not in {"adaptive", "fixed"}:
             raise ConfigError("--blur-strategy must be adaptive or fixed")
-        if self.device not in {"cpu", "cuda", "mps"} and not self.device.startswith(
+        if self.device not in {"auto", "cpu", "cuda", "mps"} and not self.device.startswith(
             "cuda:"
         ):
-            raise ConfigError("--device must be cpu, cuda, cuda:N, or mps")
+            raise ConfigError("--device must be auto, cpu, cuda, cuda:N, or mps")
         if self.ffmpeg is not None and not self.ffmpeg.expanduser().is_file():
             raise ConfigError(f"--ffmpeg executable does not exist: {self.ffmpeg}")
+        if self.job_temp_dir is not None and not self.job_temp_dir.expanduser().is_dir():
+            raise ConfigError(
+                f"--job-temp-dir does not exist: {self.job_temp_dir}"
+            )
+        if self.debug and self.mask_preview:
+            raise ConfigError("--debug and --mask-preview cannot be used together")
         if self.lost_buffer < 0:
             raise ConfigError("--lost-buffer cannot be negative")
         if not 0.0 <= self.smooth <= 1.0:
@@ -96,13 +150,6 @@ class AppConfig:
             raise ConfigError("--flow-min-confirmations must be at least 1")
         if self.flow_max_missed < 0:
             raise ConfigError("--flow-max-missed cannot be negative")
-        if any(track_id < 0 for track_id in self.exclude_ids):
-            raise ConfigError("--exclude-ids cannot contain negative IDs")
-        if self.exclude_ids and not self.allow_unsafe_exclusions:
-            raise ConfigError(
-                "--exclude-ids uses temporary motion IDs and can expose the wrong "
-                "person; repeat with --allow-unsafe-exclusions after review"
-            )
         return self
 
     def blur_kernel_for(self, confidence: float, threshold: float) -> int:

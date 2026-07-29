@@ -108,6 +108,17 @@
     .section-title h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin: 0; }
     .settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
     .settings .field { margin: 0; }
+    .settings .span-2 { grid-column: 1 / -1; }
+    .advanced-panel {
+      margin-top: 18px; border: 1px solid var(--line); border-radius: 13px;
+      background: rgba(14, 18, 22, .55); overflow: hidden;
+    }
+    .advanced-panel summary {
+      padding: 13px 15px; cursor: pointer; color: #c7d0d8;
+      font-size: 12px; font-weight: 750; user-select: none;
+    }
+    .advanced-content { padding: 3px 14px 14px; border-top: 1px solid var(--line); }
+    .hidden { display: none !important; }
     .switches { display: flex; flex-wrap: wrap; gap: 14px; margin: 18px 0; }
     .check { display: inline-flex; align-items: center; gap: 8px; color: #c7d0d8; font-size: 12px; }
     .check input { width: 16px; min-height: 16px; accent-color: var(--accent-2); }
@@ -200,11 +211,11 @@
             </div>
           </div>
           <div class="field">
-            <label for="model" class="label-line"><span data-i18n="modelLabel">Local model</span><span class="help" tabindex="0" data-help="modelHelp">?</span></label>
-            <div class="path-row">
-              <select id="model"><option value="yolov11m-face.pt" data-i18n="modelsLoading">Loading local models…</option></select>
-              <button id="pick-model" data-i18n="pickModel">Choose model</button>
-            </div>
+            <label for="mask-engine" class="label-line"><span data-i18n="maskEngine">Mask mode</span><span class="help" tabindex="0" data-help="maskEngineHelp">?</span></label>
+            <select id="mask-engine">
+              <option value="geometric" data-i18n="geometricEngine">Fast geometric · YuNet</option>
+              <option value="sam2.1" data-i18n="sam2Engine">SAM 2.1 high quality · YuNet</option>
+            </select>
           </div>
 
           <div class="section-title"><h3 data-i18n="privacyPresets">Privacy presets</h3></div>
@@ -220,10 +231,74 @@
             </button>
           </div>
 
-          <div class="section-title"><h3 data-i18n="advanced">Advanced</h3></div>
-          <div class="settings">
+          <details class="advanced-panel">
+            <summary data-i18n="advanced">Advanced settings</summary>
+            <div class="advanced-content">
+            <div class="settings">
+            <div class="field span-2">
+              <label for="model" class="label-line"><span data-i18n="modelLabel">Detector model</span><span class="help" tabindex="0" data-help="modelHelp">?</span></label>
+              <div class="path-row">
+                <select id="model"><option value="face_detection_yunet_2023mar.onnx" data-i18n="modelsLoading">Loading local models…</option></select>
+                <button id="pick-model" data-i18n="pickModel">Choose model</button>
+              </div>
+            </div>
+            <div class="field sam2-option hidden">
+              <label for="sam-mask-expansion" class="label-line"><span data-i18n="samMaskExpansion">SAM mask expansion</span><span class="help" tabindex="0" data-help="samMaskExpansionHelp">?</span></label>
+              <input id="sam-mask-expansion" type="number" min="0" max="0.5" step="0.01" value="0.12">
+            </div>
+            <div class="field sam2-option hidden">
+              <label for="segmentation-combine" class="label-line"><span data-i18n="segmentationCombine">Detector-box combination</span><span class="help" tabindex="0" data-help="segmentationCombineHelp">?</span></label>
+              <select id="segmentation-combine">
+                <option value="union" data-i18n="combineUnion">Union (recommended)</option>
+                <option value="intersection" data-i18n="combineIntersection">Intersection</option>
+                <option value="mask-only" data-i18n="combineMaskOnly">SAM contour only</option>
+              </select>
+            </div>
+            <div class="field span-2 sam2-option hidden">
+              <label for="sam2-model" class="label-line"><span data-i18n="sam2Model">SAM 2.1 model</span><span class="help" tabindex="0" data-help="sam2ModelHelp">?</span></label>
+              <div class="path-row">
+                <select id="sam2-model">
+                  <option value="facebook/sam2.1-hiera-base-plus" data-i18n="sam2Base">Base+ (recommended)</option>
+                  <option value="facebook/sam2.1-hiera-small" data-i18n="sam2Small">Small (faster)</option>
+                  <option value="facebook/sam2.1-hiera-large" data-i18n="sam2Large">Large (highest quality)</option>
+                </select>
+                <button id="pick-sam2-model" data-i18n="pickSam2Model">Choose local folder</button>
+              </div>
+            </div>
+            <div class="field sam2-option hidden">
+              <label for="sam2-refresh-interval" class="label-line"><span data-i18n="sam2RefreshInterval">Detector correction interval</span><span class="help" tabindex="0" data-help="sam2RefreshIntervalHelp">?</span></label>
+              <input id="sam2-refresh-interval" type="number" min="1" step="1" value="15">
+            </div>
+            <div class="field accelerated-option hidden">
+              <label for="device" class="label-line"><span data-i18n="device">Compute device</span><span class="help" tabindex="0" data-help="deviceHelp">?</span></label>
+              <select id="device">
+                <option value="auto" data-i18n="deviceAuto">Auto (recommended)</option>
+                <option value="cpu">CPU</option>
+                <option value="cuda">CUDA</option>
+                <option value="mps">MPS</option>
+              </select>
+            </div>
+            <div class="field span-2 sam2-option hidden">
+              <label class="check"><input id="temporal-stabilization" type="checkbox" checked><span data-i18n="temporalStabilization">Temporal stabilization</span><span class="help" tabindex="0" data-help="temporalStabilizationHelp">?</span></label>
+            </div>
+            <div class="field temporal-option hidden">
+              <label for="backfill-frames" class="label-line"><span data-i18n="backfillFrames">Backfill frames</span><span class="help" tabindex="0" data-help="backfillFramesHelp">?</span></label>
+              <input id="backfill-frames" type="number" min="0" max="60" step="1" value="10">
+            </div>
+            <div class="field temporal-option hidden">
+              <label for="release-hold-frames" class="label-line"><span data-i18n="releaseHoldFrames">Release hold frames</span><span class="help" tabindex="0" data-help="releaseHoldFramesHelp">?</span></label>
+              <input id="release-hold-frames" type="number" min="0" max="12" step="1" value="5">
+            </div>
+            <div class="field temporal-option hidden">
+              <label for="scene-cut-sensitivity" class="label-line"><span data-i18n="sceneCutSensitivity">Scene-cut sensitivity</span><span class="help" tabindex="0" data-help="sceneCutSensitivityHelp">?</span></label>
+              <input id="scene-cut-sensitivity" type="number" min="0" max="1" step="0.05" value="0.55">
+            </div>
+            <div class="field temporal-option hidden">
+              <label for="temporal-storage-limit" class="label-line"><span data-i18n="temporalStorageLimit">Temporary storage limit (MiB)</span><span class="help" tabindex="0" data-help="temporalStorageLimitHelp">?</span></label>
+              <input id="temporal-storage-limit" type="number" min="64" step="64" value="4096">
+            </div>
             <div class="field">
-              <label for="mask-shape" class="label-line"><span data-i18n="maskShape">Mask shape</span><span class="help" tabindex="0" data-help="maskShapeHelp">?</span></label>
+              <label for="mask-shape" class="label-line"><span data-i18n="maskShape">Geometry / fallback shape</span><span class="help" tabindex="0" data-help="maskShapeHelp">?</span></label>
               <select id="mask-shape">
                 <option value="rounded-rect" data-i18n="roundedRect">Rounded rectangle (recommended)</option>
                 <option value="rectangle" data-i18n="rectangle">Full rectangle</option>
@@ -246,7 +321,7 @@
               <input id="kernel-max" type="number" min="1" step="2" value="251">
             </div>
             <div class="field">
-              <label for="mask-scale" class="label-line"><span data-i18n="maskScale">Mask coverage</span><span class="help" tabindex="0" data-help="maskScaleHelp">?</span></label>
+              <label for="mask-scale" class="label-line"><span data-i18n="maskScale">Geometry / fallback coverage</span><span class="help" tabindex="0" data-help="maskScaleHelp">?</span></label>
               <input id="mask-scale" type="number" min="1" max="3" step="0.05" value="1.5">
             </div>
             <div class="field">
@@ -264,13 +339,15 @@
                 <option value="fast">Fast</option>
               </select>
             </div>
-          </div>
-
-          <div class="switches">
-            <label class="check"><input id="overwrite" type="checkbox" checked><span data-i18n="overwrite">Allow atomic overwrite</span><span class="help" tabindex="0" data-help="overwriteHelp">?</span></label>
-            <label class="check"><input id="offline" type="checkbox"><span data-i18n="offline">Require offline model</span><span class="help" tabindex="0" data-help="offlineHelp">?</span></label>
-            <label class="check"><input id="no-nvenc" type="checkbox"><span data-i18n="noNvenc">Disable NVENC</span><span class="help" tabindex="0" data-help="noNvencHelp">?</span></label>
-          </div>
+            </div>
+            <div class="switches">
+              <label class="check"><input id="mask-preview" type="checkbox"><span data-i18n="maskPreview">Mask diagnostic video</span><span class="help" tabindex="0" data-help="maskPreviewHelp">?</span></label>
+              <label class="check"><input id="overwrite" type="checkbox" checked><span data-i18n="overwrite">Allow atomic overwrite</span><span class="help" tabindex="0" data-help="overwriteHelp">?</span></label>
+              <label class="check sam2-option hidden"><input id="offline" type="checkbox"><span data-i18n="offline">Require offline SAM model</span><span class="help" tabindex="0" data-help="offlineHelp">?</span></label>
+              <label class="check"><input id="no-nvenc" type="checkbox"><span data-i18n="noNvenc">Disable NVENC</span><span class="help" tabindex="0" data-help="noNvencHelp">?</span></label>
+            </div>
+            </div>
+          </details>
 
           <div class="actions">
             <button class="primary" id="start" data-i18n="start">Start processing</button>
@@ -304,6 +381,7 @@
 
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
+    if (token) history.replaceState(null, "", location.pathname);
     const $ = (id) => document.getElementById(id);
     const translations = {
       en: {
@@ -313,42 +391,75 @@
         settingsHelp: "Choose a local video and privacy level. The UI uses the same pipeline as the CLI.",
         inputLabel: "Input video", inputPlaceholder: "Choose a local video file", pickInput: "Choose video",
         outputLabel: "Output location", outputPlaceholder: "Output MP4 path", pickOutput: "Choose output",
-        modelLabel: "Local model", modelsLoading: "Loading local models…", pickModel: "Choose model",
+        modelLabel: "Detector model", modelsLoading: "Loading local models…", pickModel: "Choose model",
         privacyPresets: "Privacy presets", standard: "Standard",
         standardHelp: "Rounded rectangle · adaptive 101–251", strong: "Strong",
         strongHelp: "Wider coverage · adaptive 151–301", strict: "Strict privacy",
-        strictHelp: "Full rectangle · fixed 301", advanced: "Advanced",
-        maskShape: "Mask shape", roundedRect: "Rounded rectangle (recommended)",
+        strictHelp: "Full rectangle · fixed 301", advanced: "Advanced settings",
+        maskEngine: "Mask mode", geometricEngine: "Fast geometric · YuNet",
+        sam2Engine: "SAM 2.1 high quality · YuNet",
+        geometricYoloEngine: "Fast geometric · YOLO (AGPL / Enterprise)",
+        sam2YoloEngine: "SAM 2.1 high quality · YOLO (AGPL / Enterprise)",
+        segmentationCombine: "Detector-box combination",
+        combineUnion: "Union (recommended)",
+        combineIntersection: "Intersection",
+        combineMaskOnly: "SAM contour only",
+        samMaskExpansion: "SAM mask expansion",
+        sam2Model: "SAM 2.1 model", sam2Base: "Base+ (recommended)",
+        sam2Small: "Small (faster)", sam2Large: "Large (highest quality)",
+        pickSam2Model: "Choose local folder",
+        sam2RefreshInterval: "Detector correction interval",
+        device: "Compute device", deviceAuto: "Auto (recommended)",
+        temporalStabilization: "Temporal stabilization",
+        backfillFrames: "Backfill frames",
+        releaseHoldFrames: "Release hold frames",
+        sceneCutSensitivity: "Scene-cut sensitivity",
+        temporalStorageLimit: "Temporary storage limit (MiB)",
+        maskShape: "Geometry / fallback shape", roundedRect: "Rounded rectangle (recommended)",
         rectangle: "Full rectangle", ellipse: "Ellipse (legacy)",
         blurStrategy: "Blur strategy", adaptive: "Confidence-adaptive", fixed: "Fixed strength",
         kernelMin: "Minimum kernel", kernelMax: "Maximum / fixed kernel",
-        maskScale: "Mask coverage", threshold: "Detection threshold",
+        maskScale: "Geometry / fallback coverage", threshold: "Detection threshold",
         minFaceSize: "Minimum face size", tracking: "Tracking preset",
-        overwrite: "Allow atomic overwrite", offline: "Require offline model",
+        maskPreview: "Mask diagnostic video",
+        overwrite: "Allow atomic overwrite", offline: "Require offline SAM model",
         noNvenc: "Disable NVENC", start: "Start processing", cancel: "Cancel",
         jobStatus: "Job status",
         jobHelp: "Closing this page does not cancel the job. Use Cancel to stop safely and discard incomplete output.",
         privacyNote: "This page connects only to the local service. Input and output are local paths; no video is uploaded.",
         inputHelp: "The source video is read directly from this local path and is never uploaded.",
         outputHelp: "The finished MP4 is written atomically to this local path.",
-        modelHelp: "Choose a .pt model found in a local model directory, or browse to another local model.",
-        maskShapeHelp: "Rounded rectangle keeps the full detected face box covered. Rectangle is strictest; ellipse preserves the legacy look.",
+        modelHelp: "The model format must match the selected detector: ONNX for YuNet or PT for optional YOLO. Local model files retain their own license and data terms.",
+        maskEngineHelp: "YuNet modes are always available. After the optional YOLO installer completes, two explicit YOLO modes appear. Ultralytics is AGPL-3.0 unless covered by an Enterprise license; the pinned akanametov/yolo-face 1.0.0 weight is offered upstream under GPL-3.0 or applicable Enterprise terms, and its WIDER FACE training-data terms also apply. Fast geometric is single-pass; SAM uses slower offline two-pass stabilization and bounded temporary storage. See THIRD_PARTY_NOTICES.md.",
+        samMaskExpansionHelp: "Expands a valid SAM contour by this fraction of face size before applying the combination policy. Default: 0.12.",
+        segmentationCombineHelp: "Union adds current tracker geometry to the SAM contour and is recommended. Intersection clips SAM to geometry. SAM contour only uses the selected detector for discovery, tracking, prompts, and correction. Invalid, sparse, failed, or drifted masks fall back to geometry in every mode.",
+        sam2ModelHelp: "Base+ is the recommended first test. Large has the highest official benchmark quality but is slower and uses more VRAM. A named model may download during initialization; offline mode requires it in the Hugging Face cache or a selected local model folder.",
+        sam2RefreshIntervalHelp: "Run the selected detector and reseed SAM every N frames. Smaller values discover new faces sooner and correct drift more often; default: 15.",
+        deviceHelp: "Auto uses CUDA when available for SAM or optional YOLO. OpenCV YuNet always runs on CPU.",
+        temporalStabilizationHelp: "Offline two-pass stabilization repairs late detections, then motion-aligns and smooths the merged final mask across Track ID changes. It takes longer and uses bounded temporary storage that is removed automatically.",
+        backfillFramesHelp: "Maximum same-scene reverse repair window for a newly detected face; default: 10. Edge entry, cuts, overlap, or weak motion stops earlier.",
+        releaseHoldFramesHelp: "Blend validated motion-aligned contours toward geometry over this many frames; default: 5. Unreliable propagation uses geometry immediately.",
+        sceneCutSensitivityHelp: "Higher values detect smaller shot changes. Every detected cut clears identity, SAM memory, and mask history; default: 0.55.",
+        temporalStorageLimitHelp: "Hard limit for proxy frames, masks, and metadata used by two-pass processing. Temporary data is removed after success, failure, or UI cancellation.",
+        maskShapeHelp: "Used directly by geometric mode and as fail-closed coverage when SAM is invalid or unavailable.",
         blurStrategyHelp: "Adaptive scales blur with detector confidence. Fixed uses the maximum kernel for every face.",
         kernelMinHelp: "Weakest odd Gaussian kernel used by adaptive blur. Larger values hide more detail.",
         kernelMaxHelp: "Strongest adaptive kernel, or the single kernel used in fixed mode.",
-        maskScaleHelp: "Expands coverage around each tracked face. 1.5 means 50% larger in width and height.",
+        maskScaleHelp: "Expands geometric and SAM-fallback coverage. 1.5 means 50% larger in width and height.",
         thresholdHelp: "Lower values detect less-certain faces but may add false positives. Default: 0.3.",
         minFaceSizeHelp: "Ignores detections smaller than this many pixels in either dimension. Default: 30.",
         trackingHelp: "Quality favors conservative optical-flow tracking; Fast reduces tracking work.",
+        maskPreviewHelp: "Writes a diagnostic MP4 at the source resolution, frame rate, and frame count: black means unmasked and blue is the exact final area that would be blurred. Source pixels, audio, boxes, and labels are not included.",
         overwriteHelp: "Keeps the old file until the replacement is completely encoded, then swaps it atomically.",
-        offlineHelp: "Rejects a missing model instead of attempting a one-time model download before processing.",
+        offlineHelp: "Requires the selected SAM model to be present locally. The small YuNet detector is installed during setup.",
         noNvencHelp: "Forces software H.264 encoding even when FFmpeg reports working NVIDIA NVENC support.",
         idle: "Waiting", starting: "Starting", running: "Processing",
         cancelling: "Cancelling safely", cancelled: "Cancelled", completed: "Completed",
         failed: "Failed", disconnected: "UI disconnected", waitingLog: "Waiting to start…",
         startedToast: "Job started", cancellingToast: "Cancelling safely",
         cancelConfirm: "Stop the current job and discard incomplete output?",
-        noModels: "No local .pt models found", frames: "frames"
+        noModels: "YuNet will be downloaded during setup",
+        noYoloModels: "Run the optional YOLO installer first", frames: "frames"
       },
       zh: {
         title: "Blur Face — 本地工作台",
@@ -357,42 +468,75 @@
         settingsHelp: "选择本地视频和隐私级别。所有选项使用与 CLI 相同的处理管线。",
         inputLabel: "输入视频", inputPlaceholder: "选择本机视频文件", pickInput: "选择视频",
         outputLabel: "输出位置", outputPlaceholder: "输出 MP4 路径", pickOutput: "选择输出",
-        modelLabel: "本地模型", modelsLoading: "正在读取本地模型…", pickModel: "选择模型",
+        modelLabel: "检测模型", modelsLoading: "正在读取本地模型…", pickModel: "选择模型",
         privacyPresets: "隐私预设", standard: "标准",
         standardHelp: "圆角矩形 · 自适应 101–251", strong: "强力",
         strongHelp: "更宽覆盖 · 自适应 151–301", strict: "严格隐私",
-        strictHelp: "完整矩形 · 固定 301", advanced: "高级参数",
-        maskShape: "遮挡形状", roundedRect: "圆角矩形（推荐）",
+        strictHelp: "完整矩形 · 固定 301", advanced: "展开高级参数",
+        maskEngine: "遮挡模式", geometricEngine: "快速几何遮挡 · YuNet",
+        sam2Engine: "SAM 2.1 高质量遮挡 · YuNet",
+        geometricYoloEngine: "快速几何遮挡 · YOLO（AGPL / 商业许可）",
+        sam2YoloEngine: "SAM 2.1 高质量遮挡 · YOLO（AGPL / 商业许可）",
+        segmentationCombine: "与检测框合并方式",
+        combineUnion: "并集（推荐）",
+        combineIntersection: "交集",
+        combineMaskOnly: "仅 SAM 轮廓",
+        samMaskExpansion: "SAM 区域膨胀比例",
+        sam2Model: "SAM 2.1 模型", sam2Base: "Base+（推荐）",
+        sam2Small: "Small（更快）", sam2Large: "Large（最高质量）",
+        pickSam2Model: "选择本地目录",
+        sam2RefreshInterval: "检测器校正间隔",
+        device: "计算设备", deviceAuto: "自动（推荐）",
+        temporalStabilization: "时序稳定",
+        backfillFrames: "向前补帧数",
+        releaseHoldFrames: "消失延迟帧数",
+        sceneCutSensitivity: "镜头切换灵敏度",
+        temporalStorageLimit: "临时存储上限（MiB）",
+        maskShape: "几何 / fallback 形状", roundedRect: "圆角矩形（推荐）",
         rectangle: "完整矩形", ellipse: "椭圆（兼容）",
         blurStrategy: "模糊策略", adaptive: "按置信度自适应", fixed: "固定强度",
         kernelMin: "最小 Kernel", kernelMax: "最大 / 固定 Kernel",
-        maskScale: "遮挡范围", threshold: "检测阈值",
+        maskScale: "几何 / fallback 范围", threshold: "检测阈值",
         minFaceSize: "最小人脸尺寸", tracking: "追踪策略",
-        overwrite: "允许原子覆盖输出", offline: "严格离线模型",
+        maskPreview: "遮挡区域测试视频",
+        overwrite: "允许原子覆盖输出", offline: "要求 SAM 模型离线可用",
         noNvenc: "禁用 NVENC", start: "开始处理", cancel: "取消",
         jobStatus: "任务状态",
         jobHelp: "关闭此页面不会取消任务；使用取消按钮可安全停止并放弃不完整输出。",
         privacyNote: "网页只连接本机服务。输入和输出字段是本地路径，不会将视频上传到网页或远程服务器。",
         inputHelp: "直接从这个本地路径读取源视频，视频不会上传。",
         outputHelp: "完整编码成功后，成品 MP4 才会原子写入这个本地路径。",
-        modelHelp: "选择模型目录中发现的 .pt 模型，也可以浏览并选择其他本地模型。",
-        maskShapeHelp: "圆角矩形保证完整覆盖检测框；完整矩形最严格；椭圆用于兼容旧版外观。",
+        modelHelp: "模型格式必须与所选检测器一致：YuNet 使用 ONNX，可选 YOLO 使用 PT。本地模型文件仍受其自身许可和数据条款约束。",
+        maskEngineHelp: "YuNet 两种模式始终可用；完成可选 YOLO 安装后会增加两个明确标注的 YOLO 模式。Ultralytics 默认适用 AGPL-3.0，除非另有 Enterprise 许可；固定的 akanametov/yolo-face 1.0.0 权重按上游声明适用 GPL-3.0 或相应 Enterprise 条款，其 WIDER FACE 训练数据条款也继续适用。快速几何使用单遍流程；SAM 使用更慢的离线两遍时序稳定和有上限的临时存储。详见 THIRD_PARTY_NOTICES.md。",
+        samMaskExpansionHelp: "先按人脸尺寸的这一比例向外扩张有效 SAM 轮廓，再应用组合策略；默认 0.12。",
+        segmentationCombineHelp: "并集把当前追踪几何范围加入 SAM 轮廓，推荐使用；交集把 SAM 裁剪在几何范围内；仅 SAM 轮廓模式中，所选检测器只负责发现、追踪、提示和纠偏。稀疏、无效、失败或漂移的 mask 在所有模式下都会回退到几何覆盖。",
+        sam2ModelHelp: "建议先测试 Base+。Large 的官方基准质量最高，但更慢、占用更多显存。模型名可能在初始化阶段下载；离线模式要求模型已在 Hugging Face 缓存中，或选择本地模型目录。",
+        sam2RefreshIntervalHelp: "每隔 N 帧运行一次所选检测器并重新提示 SAM。数值越小，发现新脸和纠正漂移越及时；默认 15。",
+        deviceHelp: "自动模式会让 SAM 或可选 YOLO 优先使用 CUDA；OpenCV YuNet 始终使用 CPU。",
+        temporalStabilizationHelp: "离线两遍处理会修补晚发现的人脸，再对所有 Track 合并后的最终 mask 做运动对齐和平滑；会增加处理时间和有上限的临时存储，结束后自动清理。",
+        backfillFramesHelp: "新检测人脸在同一镜头内最多向前修补的帧数；默认 10。边缘进入、切镜、重叠或运动证据不足会提前停止。",
+        releaseHoldFramesHelp: "在此帧数内将验证可靠的运动对齐轮廓逐步融合到几何范围；默认 5。传播不可靠时立即使用几何遮挡。",
+        sceneCutSensitivityHelp: "数值越高越容易检测较小的镜头变化。检测到切镜后立即清除身份、SAM memory 和 mask 历史；默认 0.55。",
+        temporalStorageLimitHelp: "限制两遍处理使用的代理帧、mask 和元数据总量；成功、失败或从 UI 取消后都会自动清理。",
+        maskShapeHelp: "几何模式直接使用；SAM 无效或不可用时作为 fail-closed 安全覆盖。",
         blurStrategyHelp: "自适应模式按检测置信度调整强度；固定模式对所有人脸使用最大 Kernel。",
         kernelMinHelp: "自适应模糊使用的最小奇数高斯 Kernel；数值越大，隐藏细节越多。",
         kernelMaxHelp: "自适应模式的最大 Kernel，也是固定模式使用的唯一 Kernel。",
-        maskScaleHelp: "扩大每个追踪人脸的遮挡范围；1.5 表示宽和高各扩大 50%。",
+        maskScaleHelp: "扩大几何遮挡和 SAM fallback 范围；1.5 表示宽和高各扩大 50%。",
         thresholdHelp: "调低可发现置信度较低的人脸，但可能增加误识别；默认 0.3。",
         minFaceSizeHelp: "忽略任一边小于该像素值的检测结果；默认 30。",
         trackingHelp: "Quality 使用更保守的光流追踪；Fast 减少追踪计算量。",
+        maskPreviewHelp: "输出与原视频分辨率、帧率和帧数相同的诊断 MP4：黑色表示不遮挡，蓝色表示实际最终会被模糊的区域。不会包含原视频像素、音轨、检测框或文字。",
         overwriteHelp: "新文件完整编码前保留旧文件，成功后再原子替换。",
-        offlineHelp: "本地缺少模型时直接失败，不在处理开始前尝试一次性下载。",
+        offlineHelp: "要求 SAM 模型已经在本地。小型 YuNet 检测模型在初始化安装时准备。",
         noNvencHelp: "即使 FFmpeg 检测到 NVIDIA NVENC，也强制使用软件 H.264 编码。",
         idle: "等待任务", starting: "正在启动", running: "正在处理",
         cancelling: "正在安全取消", cancelled: "已取消", completed: "处理完成",
         failed: "处理失败", disconnected: "UI 连接中断", waitingLog: "等待开始处理…",
         startedToast: "任务已启动", cancellingToast: "正在安全取消",
         cancelConfirm: "停止当前任务并放弃未完成的输出？",
-        noModels: "没有找到本地 .pt 模型", frames: "帧"
+        noModels: "初始化时会下载 YuNet 模型",
+        noYoloModels: "请先运行可选 YOLO 安装程序", frames: "帧"
       }
     };
     function browserLanguage() {
@@ -471,7 +615,50 @@
     ["mask-shape", "blur-strategy", "kernel-min", "kernel-max", "mask-scale"].forEach(id => {
       $(id).addEventListener("change", () => document.querySelectorAll(".preset").forEach(x => x.classList.remove("active")));
     });
+    function selectedDetector() {
+      return $("mask-engine").value.endsWith("-yolo") ? "yolo" : "yunet";
+    }
+    function selectedMaskEngine() {
+      return $("mask-engine").value.startsWith("sam2.1")
+        ? "sam2.1" : "geometric";
+    }
+    function updateEngineOptions() {
+      const engine = selectedMaskEngine();
+      const sam2 = engine === "sam2.1";
+      document.querySelectorAll(".sam2-option").forEach(node => {
+        node.classList.toggle("hidden", !sam2);
+      });
+      const temporal = sam2 && $("temporal-stabilization").checked;
+      document.querySelectorAll(".temporal-option").forEach(node => {
+        node.classList.toggle("hidden", !temporal);
+      });
+      const accelerated = sam2 || selectedDetector() === "yolo";
+      document.querySelectorAll(".accelerated-option").forEach(node => {
+        node.classList.toggle("hidden", !accelerated);
+      });
+    }
+    $("mask-engine").addEventListener("change", () => {
+      updateEngineOptions();
+      updateDetectorModels();
+      document.querySelectorAll(".preset").forEach(x => x.classList.remove("active"));
+    });
+    $("temporal-stabilization").addEventListener("change", updateEngineOptions);
 
+    let localYuNetModels = [];
+    let localYoloModels = [];
+    function addYoloModes() {
+      if ($("mask-engine").querySelector('option[value="geometric-yolo"]')) return;
+      [
+        ["geometric-yolo", "geometricYoloEngine"],
+        ["sam2.1-yolo", "sam2YoloEngine"]
+      ].forEach(([value, key]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.dataset.i18n = key;
+        option.textContent = t(key);
+        $("mask-engine").appendChild(option);
+      });
+    }
     function addModelOption(path, selected = false) {
       let option = Array.from($("model").options).find(node => node.value === path);
       if (!option) {
@@ -483,19 +670,45 @@
       }
       if (selected) $("model").value = path;
     }
+    function updateDetectorModels() {
+      const yolo = selectedDetector() === "yolo";
+      const models = yolo ? localYoloModels : localYuNetModels;
+      $("model").replaceChildren();
+      if (!models.length) {
+        addModelOption(
+          yolo ? "yolov11m-face.pt" : "face_detection_yunet_2023mar.onnx",
+          true
+        );
+        $("model").options[0].dataset.i18n = yolo ? "noYoloModels" : "noModels";
+        $("model").options[0].textContent = t(yolo ? "noYoloModels" : "noModels");
+      } else {
+        models.forEach(path => addModelOption(path));
+        const preferredPattern = yolo
+          ? /yolov11m-face\.pt$/i
+          : /face_detection_yunet_2023mar\.onnx$/i;
+        $("model").value = models.find(path => preferredPattern.test(path)) || models[0];
+      }
+      updateEngineOptions();
+    }
+    function addSam2ModelOption(path, selected = false) {
+      let option = Array.from($("sam2-model").options).find(node => node.value === path);
+      if (!option) {
+        option = document.createElement("option");
+        option.value = path;
+        option.textContent = path.split(/[\\/]/).pop();
+        option.title = path;
+        $("sam2-model").appendChild(option);
+      }
+      if (selected) $("sam2-model").value = path;
+    }
     async function loadModels() {
       try {
         const data = await api("/api/models");
-        $("model").replaceChildren();
-        if (!data.models.length) {
-          addModelOption("yolov11m-face.pt", true);
-          $("model").options[0].dataset.i18n = "noModels";
-          $("model").options[0].textContent = t("noModels");
-        } else {
-          data.models.forEach(path => addModelOption(path));
-          const preferred = data.models.find(path => /yolov11m-face\.pt$/i.test(path));
-          $("model").value = preferred || data.models[0];
-        }
+        localYuNetModels = data.models;
+        localYoloModels = data.yolo_models;
+        if (data.yolo_available) addYoloModes();
+        updateDetectorModels();
+        data.sam2_models.forEach(path => addSam2ModelOption(path));
       } catch (e) { toast(e.message, true); }
     }
     $("pick-input").addEventListener("click", async () => {
@@ -520,20 +733,50 @@
     $("pick-model").addEventListener("click", async () => {
       try {
         const data = await api("/api/pick-model", {
+          method: "POST", body: JSON.stringify({
+            language: currentLanguage,
+            detector: selectedDetector()
+          })
+        });
+        if (data.path) {
+          const collection = selectedDetector() === "yolo"
+            ? localYoloModels : localYuNetModels;
+          if (!collection.includes(data.path)) collection.push(data.path);
+          updateDetectorModels();
+          $("model").value = data.path;
+        }
+      } catch (e) { toast(e.message, true); }
+    });
+    $("pick-sam2-model").addEventListener("click", async () => {
+      try {
+        const data = await api("/api/pick-sam2-model", {
           method: "POST", body: JSON.stringify({ language: currentLanguage })
         });
-        if (data.path) addModelOption(data.path, true);
+        if (data.path) addSam2ModelOption(data.path, true);
       } catch (e) { toast(e.message, true); }
     });
     $("start").addEventListener("click", async () => {
       const payload = {
         input: $("input").value.trim(),
         output: $("output").value.trim(),
+        detector: selectedDetector(),
         model: $("model").value,
         overwrite: $("overwrite").checked,
         threshold: Number($("threshold").value),
         mask_scale: Number($("mask-scale").value),
         mask_shape: $("mask-shape").value,
+        mask_engine: selectedMaskEngine(),
+        sam_mask_expansion: Number($("sam-mask-expansion").value),
+        segmentation_combine: $("segmentation-combine").value,
+        sam2_model: $("sam2-model").value,
+        sam2_refresh_interval: Number($("sam2-refresh-interval").value),
+        temporal_stabilization: $("temporal-stabilization").checked,
+        mask_preview: $("mask-preview").checked,
+        backfill_frames: Number($("backfill-frames").value),
+        release_hold_frames: Number($("release-hold-frames").value),
+        scene_cut_sensitivity: Number($("scene-cut-sensitivity").value),
+        temporal_storage_limit_mb: Number($("temporal-storage-limit").value),
+        device: $("device").value,
         blur_strategy: $("blur-strategy").value,
         blur_kernel_min: Number($("kernel-min").value),
         blur_kernel: Number($("kernel-max").value),
@@ -581,6 +824,7 @@
       }
     }
     applyLanguage();
+    updateEngineOptions();
     loadModels();
     refresh();
     setInterval(refresh, 700);

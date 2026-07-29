@@ -1,35 +1,36 @@
 # Blur Face Local
 
-**A local-first face anonymization studio for video — now with a browser UI.**
+**Offline face anonymization for video, with a local browser UI and CLI.**
 
-[中文说明](README.zh.md) · [Version 1.0.0 notes](CHANGELOG.md)
+[中文说明](README.zh.md) · [Version notes](CHANGELOG.md) ·
+[Temporal design](docs/temporal-stabilization.md)
 
-Blur Face detects, tracks, and obscures faces without sending video frames to a
-remote service. Version 1.0 makes the local web interface the easiest way to
-use the project, while keeping the complete CLI for automation and advanced
-workflows.
+Blur Face decodes, analyzes, masks, and encodes video on the local computer.
+The browser page connects only to `127.0.0.1`; video frames are never uploaded.
 
-![Blur Face Local Studio UI](docs/blur-face-local-studio.png)
+## Masking modes
 
-## What you get in 1.0
+- **Fast geometric** is the default. The selected detector finds faces, the local
+  tracker bridges short gaps, and the existing geometric masks render in one
+  pass with low startup cost.
+- **SAM 2.1 high quality** uses detector boxes for discovery and correction, then
+  SAM video memory produces face-shaped masks. It uses an offline two-pass
+  pipeline so later detections can repair earlier frames and the final
+  cross-track mask can be motion-aligned and stabilized before rendering.
 
-- A polished local web UI with native input, output, and model file pickers.
-- Automatic English/Chinese selection from browser preferences, plus
-  `Auto / EN / 中文` manual controls.
-- Local model discovery: every `.pt` file in the configured `models`
-  directories appears in the UI.
-- Helpful `?` explanations for every processing option.
-- Standard, Strong, and Strict Privacy presets with editable advanced settings.
-- Live frame progress, logs, and safe cancellation.
-- Conservative multi-face tracking with optical-flow support during short
-  detector gaps.
-- Confidence-adaptive blur, strong privacy defaults, and three mask shapes.
-- Atomic output replacement: an incomplete encode never replaces a good file.
-- NVIDIA CUDA detection and optional NVENC encoding with verified fallbacks.
+Face parsing/BiSeNet is not a dependency. The default
+`face_detection_yunet_2023mar.onnx` detector comes from OpenCV Zoo and is MIT
+licensed. OpenCV 4.5+ and official SAM 2 code/checkpoints use Apache-2.0.
+Ultralytics YOLO is available only as an explicit optional detector:
+Ultralytics is AGPL-3.0 unless covered by an Enterprise license, and the
+`akanametov/yolo-face` 1.0.0 weight is offered upstream under GPL-3.0 or an
+applicable Enterprise license. Its training recipe identifies WIDER FACE, whose
+dataset terms also remain applicable. YOLO is not installed by the base runtime
+and is never selected from a `.pt` file automatically.
 
 ## Quick start
 
-Python 3.10 or newer is required.
+Python 3.10 or newer and a system FFmpeg executable are required.
 
 ### Windows
 
@@ -50,201 +51,182 @@ chmod +x init.sh start-ui.sh
 ./start-ui.sh
 ```
 
-The setup script creates an isolated `.venv`, installs pinned dependencies,
-installs the project in editable mode, and downloads the verified release
-models. After that, a normal `git pull` updates the code used by the launchers.
+The setup output reports the duration of environment creation, dependency
+installation, the small YuNet download, and the total. Geometric mode does not
+install PyTorch. Setup rebuilds the isolated `.venv`, while preserving models
+and user files, so dependencies removed by an upgrade cannot remain active.
+On Windows, if FFmpeg is missing, `init.bat` discloses that Gyan's full build
+is a large external GPL package and asks before invoking WinGet. Unix setup
+only reports the system-package prerequisite.
+
+During initialization, setup explains the optional YOLO license boundary and
+asks whether to install it. Choosing **No** leaves the lean MIT/Apache-default
+YuNet runtime. To make that choice later, run:
+
+```powershell
+.\install-yolo.bat
+```
+
+```bash
+./install-yolo.sh
+```
+
+The optional installer asks for license acceptance, installs its PyTorch and
+Ultralytics dependencies, and downloads the SHA-256-pinned
+`yolov11m-face.pt`. Before acceptance it identifies the weight's upstream
+GPL-3.0/Enterprise boundary and WIDER FACE training-data source. CI and
+non-interactive initialization skip YOLO by default. See
+`THIRD_PARTY_NOTICES.md` for exact upstream links.
+
+To enable SAM after normal setup:
+
+```powershell
+.\install-sam2.bat
+```
+
+```bash
+./install-sam2.sh
+```
+
+The SAM installer selects the tested CUDA runtime when NVIDIA is available and
+otherwise installs the CPU runtime. It also reports each stage duration. A
+named SAM checkpoint may download during model initialization, before video
+analysis starts; use offline mode after it is cached or select a local model
+directory.
+
+A normal `git pull` does not require reinitialization unless dependency lock
+files or the setup scripts changed.
 
 ## Local Studio
 
-`start-ui.bat` or `start-ui.sh` starts a small server bound exclusively to
-`127.0.0.1` and opens a random-token-protected page in your browser.
+The main form intentionally exposes only the input, output, masking mode, and
+privacy preset. Without optional YOLO it shows two YuNet modes: Fast geometric
+and SAM high quality. After a complete YOLO installation, the same selector
+adds Fast geometric · YOLO and SAM · YOLO. **Advanced settings** expands the
+controls that apply to the selected engine:
 
-The UI provides:
+- the model matching the detector already named by the selected mode;
+- common blur, tracking, output, and diagnostic settings;
+- geometric/fallback shape and coverage;
+- SAM model, device, correction interval, mask combination, temporal window,
+  scene-cut sensitivity, and temporary-storage limit.
 
-- native local file selection — the browser does not upload the video;
-- a model dropdown populated from `models/` and `BLUR_FACE_MODEL_DIR`;
-- an additional picker for any other local `.pt` model;
-- automatic browser-language detection and persistent manual language choice;
-- bilingual hover/focus help for every option;
-- privacy presets and full access to mask, blur, threshold, size, tracking,
-  overwrite, offline, and encoding controls;
-- current frame progress, processing logs, completion state, and cancellation.
+Privacy presets never change the selected masking engine. The UI supports
+automatic English/Chinese selection and manual `Auto / EN / 中文` switching.
+Automatic YOLO discovery is intentionally limited to the verified
+`yolov11m-face.pt`; arbitrary local YOLO weights must also pass a runtime
+`detect` task and explicit `face` class check.
 
-Closing the browser page does not cancel a running job. Use the Cancel button
-to stop the child process safely and discard its incomplete temporary output.
+Enable **Mask diagnostic video / 遮挡区域测试视频** to produce a black video
+whose blue pixels are the exact final region that normal output would blur.
+Source pixels, audio, boxes, IDs, and labels are excluded.
 
-If port 8765 is busy:
+Progress is one monotonic percentage across analysis, per-track stabilization,
+final scene-mask stabilization, and render/encode. SAM logs include model
+initialization time, device, video metadata, scenes, corrections, prompts,
+accepted/fallback masks, reverse backfill, memory resets, temporary-storage
+peak, pass-specific work counters, whole-job ETA, and per-phase timing.
 
-```powershell
-.\start-ui.bat --port 8766
-```
+## SAM mask semantics
 
-## Privacy boundary
+Temporal stabilization happens before tracks are merged, then again on the
+identity-free final scene mask:
 
-- Video decoding, detection, tracking, masking, and encoding happen locally.
-- The frame-processing loop does not make network calls or upload video.
-- If a selected model is missing, model initialization may download a known
-  model **before** the first video frame is decoded.
-- Enable **Require offline model** in the UI, or pass `--offline`, to reject a
-  missing model instead of downloading it.
-- The UI listens only on loopback, requires a random token for API calls, has no
-  upload control, and loads no remote assets.
-- No automatic detector can guarantee perfect recall. Review sensitive output
-  before publishing it.
+1. analyze frames and persist bounded proxy-resolution masks;
+2. repair and stabilize each `(scene_id, track_id)`;
+3. apply the selected SAM/geometry combination policy;
+4. merge tracks and stabilize the final scene mask;
+5. reopen the source and render the completed mask sequence.
 
-## Privacy presets and masks
+Combination modes:
 
-| Preset | Shape | Blur | Coverage |
-|---|---|---|---:|
-| Standard | Rounded rectangle | Adaptive 101–251 | 1.5× |
-| Strong | Rounded rectangle | Adaptive 151–301 | 1.65× |
-| Strict Privacy | Full rectangle | Fixed 301 | 1.5× |
+- `union` adds current tracker geometry to the SAM contour and is recommended;
+- `intersection` clips the SAM contour to current tracker geometry;
+- `mask-only` renders a valid SAM contour without adding the box.
 
-The default rounded rectangle rounds only the margin outside the detector box.
-The complete detected rectangle remains opaque. If the expanded region reaches
-a frame boundary, it becomes square rather than cutting into the face.
+Sparse, one-dimensional, under-covering, fragmented, empty, missing/non-finite
+score, failed, or drifted SAM masks use the configured geometric fallback in
+every combination mode. Scene cuts clear the
+tracker, SAM memory, reverse cache, and temporal history. Ambiguous crossings
+are not used to seed identity-owned SAM memory.
 
-- `rounded-rect`: safe default with less visual bulk.
-- `rectangle`: strictest full expanded-box coverage.
-- `ellipse`: legacy appearance; less conservative around corners.
-
-Current raw detections and smoothed/predicted tracking regions are rendered
-separately. Smoothing therefore cannot replace or lag behind the current
-detector result. The default minimum face size is 30 pixels to avoid turning
-tiny noise into visible masks.
-
-## GPU behavior
-
-The project has three independent acceleration paths:
-
-1. **Detection:** YOLO uses PyTorch CUDA when available and prints the GPU,
-   PyTorch, and CUDA runtime versions.
-2. **Mask rendering:** the standard OpenCV wheel performs blur composition on
-   CPU. Seeing `Render: CPU` does not mean face detection is on CPU.
-3. **Encoding:** NVENC is used only when the selected FFmpeg passes a real
-   runtime probe; otherwise encoding falls back to `libx264`.
-
-On Windows and Linux, `init` checks `nvidia-smi`. NVIDIA systems receive the
-tested PyTorch 2.12.1 CUDA 12.6 wheel and setup verifies
-`torch.cuda.is_available()`. Set `BLUR_FACE_CPU_ONLY=1` before setup only when
-CPU-only installation is intentional.
+By default, a newly reliable face can backfill up to 10 frames in the same
+continuous shot. Reverse propagation stops at cuts, real edge entry, implausible
+motion or scale, weak appearance agreement, or overlap with another person.
+Temporary proxy frames, masks, and SQLite metadata have a 4096 MiB hard limit
+by default and are removed on success, failure, or UI cancellation.
 
 ## CLI
 
-The UI and CLI use the same validated processing pipeline.
-
 ```powershell
-# Windows
 .\.venv\Scripts\blur-face.exe input.mov -o output.mp4 --overwrite
 
-# Select a local model and strict rectangular coverage
 .\.venv\Scripts\blur-face.exe input.mov -o output.mp4 `
-  --model .\models\yolov11m-face.pt `
-  --mask-shape rectangle `
-  --blur-strategy fixed `
-  --blur-kernel 301 `
+  --mask-engine sam2.1 `
+  --detector yolo `
+  --model yolov11m-face.pt `
+  --segmentation-combine union `
+  --device auto `
   --overwrite
 ```
 
 ```bash
-# Linux / macOS
 .venv/bin/blur-face input.mov -o output.mp4 --overwrite
-
-# Strictly offline model initialization
-.venv/bin/blur-face input.mov -o output.mp4 --offline
 ```
 
 Useful defaults:
 
 | Option | Default | Purpose |
 |---|---:|---|
-| `--model` | `yolov11m-face.pt` | Local path or downloadable model name |
+| `--detector` | `yunet` | `yunet` or explicitly installed `yolo` |
+| `--model` | `face_detection_yunet_2023mar.onnx` | Local YuNet ONNX model |
 | `--thresh` | `0.3` | Detector confidence threshold |
-| `--mask-shape` | `rounded-rect` | Coverage geometry |
-| `--mask-scale` | `1.5` | Expansion around each coverage region |
-| `--blur-strategy` | `adaptive` | Confidence-adaptive or fixed blur |
-| `--blur-kernel-min` | `101` | Minimum adaptive blur kernel |
-| `--blur-kernel` | `251` | Maximum adaptive or fixed kernel |
-| `--min-face-size` | `30` | Minimum detection width and height |
-| `--lost-buffer` | `180` | Maximum retained tracking lifetime |
-| `--preset` | `quality` | Tracking/optical-flow cost policy |
-| `--offline` | off | Prohibit missing-model download |
+| `--mask-engine` | `geometric` | `geometric` or `sam2.1` |
+| `--mask-shape` | `rounded-rect` | Geometry and SAM fallback shape |
+| `--mask-scale` | `1.5` | Geometry and fallback expansion |
+| `--segmentation-combine` | `union` | `union`, `intersection`, or `mask-only` |
+| `--sam-mask-expansion` | `0.12` | SAM contour expansion |
+| `--sam2-model` | `facebook/sam2.1-hiera-base-plus` | SAM directory or model ID |
+| `--sam2-refresh-interval` | `15` | Selected-detector correction interval |
+| `--device` | `auto` | SAM/YOLO device: auto, CPU, CUDA, or MPS |
+| `--[no-]temporal-stabilization` | on | Offline two-pass stabilization |
+| `--backfill-frames` | `10` | Same-scene reverse repair window |
+| `--release-hold-frames` | `5` | Aligned contour transition window |
+| `--scene-cut-sensitivity` | `0.55` | Scene reset sensitivity |
+| `--temporal-storage-limit-mb` | `4096` | Temporary storage hard limit |
+| `--mask-preview` | off | Black/blue final-mask diagnostic video |
 
-Run `blur-face --help` for the complete authoritative option list.
+Run `blur-face --help` for all tracking, blur, encoding, and offline options.
 
-Track exclusions are intentionally guarded. IDs are temporary motion tracks,
-not biometric identities, so `--exclude-ids` requires the explicit
-`--allow-unsafe-exclusions` acknowledgement.
+## Privacy and output safety
 
-## Safe output behavior
-
-Encoding first writes a hidden temporary file beside the target. The requested
-output path is replaced only after FFmpeg exits successfully and the result is
-non-empty. Failed or interrupted runs remove the temporary output and return a
-non-zero exit status. Existing files require `--overwrite`, and even then remain
-untouched until the replacement is complete.
-
-## Models and network access
-
-The installer places verified release models in `models/` using pinned SHA-256
-digests and atomic downloads. Model lookup checks:
-
-1. an explicit path;
-2. `BLUR_FACE_MODEL_DIR`;
-3. the current project's `models/` directory;
-4. the installed package project's `models/` directory.
-
-The UI lists local `.pt` files from these model directories. Known missing
-release models may be downloaded during initialization unless offline mode is
-enabled. No model download occurs after video processing begins.
-
-## Update and uninstall
-
-```powershell
-# Update
-git pull
-
-# Remove environment and generated caches; keep models and user files
-.\uninstall.bat
-
-# Also remove model files
-.\uninstall.bat --remove-models
-```
-
-```bash
-git pull
-./uninstall.sh
-./uninstall.sh --remove-models
-```
-
-## Architecture
-
-```text
-Local UI / CLI → AppConfig validation → model initialization
-                                           ↓
-video → detector → global tracking + optical flow → privacy regions
-                                                        ↓
-                                                mask renderer
-                                                        ↓
-                                      atomic FFmpeg encoder → output
-```
-
-The package is split into focused modules for configuration, model storage,
-video input, detection, tracking, rendering, encoding, pipeline ownership,
-console compatibility, and local UI process control.
+- No automatic detector guarantees perfect recall; review sensitive output.
+- Model initialization completes before the first frame is processed.
+- Incomplete encoding never replaces the destination. Output is written to a
+  job-owned partial path and atomically moved into place only after FFmpeg
+  succeeds and produces a non-empty file.
+- The UI owns a unique job directory beside the output. Normal exceptions,
+  cancellation, and forced process-tree termination all trigger cleanup.
+- FFmpeg is an external system prerequisite and is not bundled by this
+  project. Its license depends on the build selected by the user.
 
 ## Development and CI
 
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall -q blurface tests scripts
+git diff --check
 ```
 
-GitHub Actions tests Python 3.10 and 3.12 on both Windows and Ubuntu. The suite
-covers privacy-mask invariants, tracking behavior, model resolution, local UI
-request validation, Windows console compatibility, installation scripts, and
-atomic encoder failures.
+GitHub Actions runs unittest discovery and compile checks on Ubuntu and Windows
+with Python 3.10 and 3.12. New `tests/test_*.py` files are included
+automatically. CI explicitly provisions an external system FFmpeg before the
+video integration tests. The default matrix remains model-free. Maintainers
+can additionally set `BLUR_FACE_REAL_SAM2_MODEL` to a local checkpoint
+directory when running unittest discovery to exercise the installed
+Transformers processor/model/session contract on CPU.
 
 ## License
 
-MIT © 2025 Jiechang Shi
+Project-owned source code is MIT © 2025 Jiechang Shi. Dependencies and model
+assets keep their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

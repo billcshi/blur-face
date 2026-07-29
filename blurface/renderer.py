@@ -77,6 +77,18 @@ def _prepare_region(frame: np.ndarray, bbox, kernel: int, mask_scale: float):
     return bx1, by1, bx2, by2, kernel, inner
 
 
+def prepare_mask_region(
+    frame: np.ndarray,
+    bbox,
+    mask_scale: float,
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    """Return the exact ROI geometry shared by mask generators and rendering."""
+    bx1, by1, bx2, by2, _kernel, inner = _prepare_region(
+        frame, bbox, 1, mask_scale
+    )
+    return (bx1, by1, bx2, by2), inner
+
+
 def _coverage_mask(
     width: int,
     height: int,
@@ -134,6 +146,39 @@ def _coverage_mask(
     return mask
 
 
+def _custom_coverage_mask(
+    coverage_mask: np.ndarray,
+    width: int,
+    height: int,
+    inner: tuple[int, int, int, int],
+    combine: str,
+) -> np.ndarray:
+    """Validate a custom mask and enforce the selected combination policy."""
+    mask = np.asarray(coverage_mask)
+    if mask.shape != (height, width):
+        raise ValueError(
+            "custom coverage mask must match the expanded render region"
+        )
+    if not np.all(np.isfinite(mask)):
+        raise ValueError("custom coverage mask must contain finite values")
+    mask = np.where(mask > 0, 255, 0).astype(np.uint8)
+    if combine not in {"union", "intersection", "mask-only"}:
+        raise ValueError(
+            "segmentation combine must be union, intersection, or mask-only"
+        )
+    if combine == "union":
+        ix1, iy1, ix2, iy2 = inner
+        if ix2 > ix1 and iy2 > iy1:
+            mask[iy1:iy2, ix1:ix2] = 255
+    elif combine == "intersection":
+        ix1, iy1, ix2, iy2 = inner
+        core = np.zeros_like(mask)
+        if ix2 > ix1 and iy2 > iy1:
+            core[iy1:iy2, ix1:ix2] = 255
+        mask = cv2.bitwise_and(mask, core)
+    return mask
+
+
 def apply_blur_cpu(
     frame: np.ndarray,
     bbox,
@@ -142,6 +187,8 @@ def apply_blur_cpu(
     frame_w: int = 1920,
     frame_h: int = 1080,
     mask_shape: str = "rounded-rect",
+    coverage_mask: np.ndarray | None = None,
+    segmentation_combine: str = "union",
 ) -> None:
     """Apply Gaussian blur to a region of the frame (mutates in place)."""
     del frame_w, frame_h  # retained for API compatibility
@@ -151,7 +198,13 @@ def apply_blur_cpu(
     roi = frame[by1:by2, bx1:bx2]
     if roi.size > 0:
         h, w = roi.shape[:2]
-        mask = _coverage_mask(w, h, inner, mask_shape)
+        mask = (
+            _coverage_mask(w, h, inner, mask_shape)
+            if coverage_mask is None
+            else _custom_coverage_mask(
+                coverage_mask, w, h, inner, segmentation_combine
+            )
+        )
         if kernel >= 31 and min(w, h) >= 40:
             # ── Gaussian with downscale optimisation ──
             small_w, small_h = w // 2, h // 2
@@ -165,6 +218,40 @@ def apply_blur_cpu(
         frame[by1:by2, bx1:bx2] = roi
 
 
+def apply_mask_preview(
+    frame: np.ndarray,
+    bbox,
+    kernel: int,
+    mask_scale: float = 1.15,
+    frame_w: int = 1920,
+    frame_h: int = 1080,
+    mask_shape: str = "rounded-rect",
+    coverage_mask: np.ndarray | None = None,
+    segmentation_combine: str = "union",
+) -> None:
+    """Paint the exact render coverage blue on an already-black frame."""
+    del kernel, frame_w, frame_h
+    bx1, by1, bx2, by2, _kernel, inner = _prepare_region(
+        frame, bbox, 1, mask_scale
+    )
+    roi = frame[by1:by2, bx1:bx2]
+    if roi.size == 0:
+        return
+    height, width = roi.shape[:2]
+    mask = (
+        _coverage_mask(width, height, inner, mask_shape)
+        if coverage_mask is None
+        else _custom_coverage_mask(
+            coverage_mask,
+            width,
+            height,
+            inner,
+            segmentation_combine,
+        )
+    )
+    roi[mask == 255] = (255, 0, 0)
+
+
 def apply_blur_gpu(
     frame: np.ndarray,
     bbox,
@@ -173,6 +260,8 @@ def apply_blur_gpu(
     frame_w: int = 1920,
     frame_h: int = 1080,
     mask_shape: str = "rounded-rect",
+    coverage_mask: np.ndarray | None = None,
+    segmentation_combine: str = "union",
 ) -> None:
     """GPU-accelerated Gaussian blur via cv2.cuda (mutates in place)."""
     del frame_w, frame_h
@@ -183,7 +272,13 @@ def apply_blur_gpu(
     if roi.size == 0:
         return
     h, w = roi.shape[:2]
-    mask = _coverage_mask(w, h, inner, mask_shape)
+    mask = (
+        _coverage_mask(w, h, inner, mask_shape)
+        if coverage_mask is None
+        else _custom_coverage_mask(
+            coverage_mask, w, h, inner, segmentation_combine
+        )
+    )
 
     if kernel >= 31 and min(w, h) >= 40:
         small_w, small_h = w // 2, h // 2
@@ -223,6 +318,8 @@ def apply_blur(
     frame_w: int = 1920,
     frame_h: int = 1080,
     mask_shape: str = "rounded-rect",
+    coverage_mask: np.ndarray | None = None,
+    segmentation_combine: str = "union",
 ) -> None:
     """Apply blur using GPU if available, falling back to CPU."""
     global HAS_CUDA, _CUDA_FALLBACK_WARNED
@@ -237,6 +334,8 @@ def apply_blur(
                 frame_w,
                 frame_h,
                 mask_shape,
+                coverage_mask,
+                segmentation_combine,
             )
             return
         except (cv2.error, AttributeError) as exc:
@@ -253,6 +352,8 @@ def apply_blur(
         frame_w,
         frame_h,
         mask_shape,
+        coverage_mask,
+        segmentation_combine,
     )
 
 
@@ -261,12 +362,10 @@ def draw_debug_box(
     bbox,
     track_id: int,
     is_predicted: bool = False,
-    is_excluded: bool = False,
     confidence: float | None = None,
 ) -> None:
     """Draw colored box + ID label on frame (mutates in place).
     Predicted tracks get dashed boxes with 'PRED' label.
-    Excluded tracks get a green 'KEPT' label.
     """
     x1, y1, x2, y2 = bbox
     c = color_for(track_id)
@@ -293,6 +392,3 @@ def draw_debug_box(
     (tw, th), _ = cv2.getTextSize(label, font, 0.5, 1)
     cv2.rectangle(frame, (x1, y1 - th - 4), (x1 + tw + 4, y1), c, -1)
     cv2.putText(frame, label, (x1 + 2, y1 - 2), font, 0.5, (0, 0, 0), 1)
-
-    if is_excluded:
-        cv2.putText(frame, "KEPT", (x1, y2 + 14), font, 0.45, (0, 255, 0), 1)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import traceback
 
 from .cli import parse_args
 
@@ -33,4 +34,5 @@ def main() -> int:
         return 130
     except Exception as exc:  # noqa: BLE001 - process boundary reports all failures
         print(f"[ERROR] {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return 1

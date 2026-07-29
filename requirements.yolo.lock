@@ -1,0 +1,4 @@
+# Optional Ultralytics YOLO detector backend.
+# Ultralytics is AGPL-3.0 unless covered by an Enterprise license.
+# Install only after explicit opt-in through init or install-yolo.
+ultralytics==8.4.51

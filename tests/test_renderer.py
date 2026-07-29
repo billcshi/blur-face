@@ -4,7 +4,13 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from blurface.renderer import _coverage_mask, apply_blur_cpu, draw_debug_box
+from blurface.renderer import (
+    _coverage_mask,
+    apply_blur_cpu,
+    apply_mask_preview,
+    draw_debug_box,
+    prepare_mask_region,
+)
 
 
 class RendererValidationTests(unittest.TestCase):
@@ -22,6 +28,94 @@ class RendererValidationTests(unittest.TestCase):
         mask = _coverage_mask(100, 80, (20, 15, 80, 65), "ellipse")
         self.assertEqual(mask[0, 0], 0)
         self.assertEqual(mask[40, 50], 255)
+
+    def test_mask_preview_paints_only_final_coverage_blue(self):
+        frame = np.zeros((40, 50, 3), dtype=np.uint8)
+        coverage = np.zeros((20, 20), dtype=np.uint8)
+        coverage[5:15, 4:16] = 255
+        apply_mask_preview(
+            frame,
+            [10, 10, 30, 30],
+            251,
+            mask_scale=1.0,
+            coverage_mask=coverage,
+            segmentation_combine="mask-only",
+        )
+        self.assertTrue(np.all(frame[15:25, 14:26] == (255, 0, 0)))
+        self.assertTrue(np.all(frame[:10] == 0))
+        self.assertEqual(
+            int(np.count_nonzero(np.any(frame != 0, axis=2))),
+            int(np.count_nonzero(coverage)),
+        )
+
+    def test_custom_mask_cannot_remove_the_detector_core(self):
+        frame = np.arange(80 * 100 * 3, dtype=np.uint8).reshape(80, 100, 3)
+        before = frame.copy()
+        bbox = [20, 20, 60, 60]
+        bounds, inner = prepare_mask_region(frame, bbox, 1.5)
+        bx1, by1, bx2, by2 = bounds
+        custom = np.zeros((by2 - by1, bx2 - bx1), dtype=np.uint8)
+        apply_blur_cpu(
+            frame,
+            bbox,
+            51,
+            mask_scale=1.5,
+            coverage_mask=custom,
+        )
+        ix1, iy1, ix2, iy2 = inner
+        core = frame[by1 + iy1 : by1 + iy2, bx1 + ix1 : bx1 + ix2]
+        old_core = before[by1 + iy1 : by1 + iy2, bx1 + ix1 : bx1 + ix2]
+        self.assertFalse(np.array_equal(core, old_core))
+        self.assertTrue(np.array_equal(frame[:by1], before[:by1]))
+
+    def test_intersection_mode_does_not_restore_the_detector_core(self):
+        frame = np.arange(80 * 100 * 3, dtype=np.uint8).reshape(80, 100, 3)
+        before = frame.copy()
+        bbox = [20, 20, 60, 60]
+        bounds, _inner = prepare_mask_region(frame, bbox, 1.5)
+        bx1, by1, bx2, by2 = bounds
+        custom = np.zeros((by2 - by1, bx2 - bx1), dtype=np.uint8)
+        custom[20:30, 20:30] = 255
+        apply_blur_cpu(
+            frame,
+            bbox,
+            51,
+            mask_scale=1.5,
+            coverage_mask=custom,
+            segmentation_combine="intersection",
+        )
+        self.assertTrue(np.array_equal(frame[by1 + 5, bx1 + 5], before[by1 + 5, bx1 + 5]))
+        self.assertFalse(np.array_equal(frame[by1 + 25, bx1 + 25], before[by1 + 25, bx1 + 25]))
+
+    def test_mask_only_preserves_contour_outside_detector_core(self):
+        frame = np.arange(80 * 100 * 3, dtype=np.uint8).reshape(80, 100, 3)
+        before = frame.copy()
+        bbox = [30, 25, 60, 55]
+        bounds, inner = prepare_mask_region(frame, bbox, 1.5)
+        bx1, by1, bx2, by2 = bounds
+        custom = np.zeros((by2 - by1, bx2 - bx1), dtype=np.uint8)
+        ix1, iy1, _ix2, _iy2 = inner
+        custom[max(0, iy1 - 5) : iy1, ix1 : ix1 + 5] = 255
+        apply_blur_cpu(
+            frame,
+            bbox,
+            51,
+            mask_scale=1.5,
+            coverage_mask=custom,
+            segmentation_combine="mask-only",
+        )
+        self.assertFalse(
+            np.array_equal(
+                frame[by1 + iy1 - 3, bx1 + ix1 + 2],
+                before[by1 + iy1 - 3, bx1 + ix1 + 2],
+            )
+        )
+        self.assertTrue(
+            np.array_equal(
+                frame[by1 + iy1 + 8, bx1 + ix1 + 8],
+                before[by1 + iy1 + 8, bx1 + ix1 + 8],
+            )
+        )
 
     def test_rejects_invalid_privacy_parameters(self):
         frame = np.zeros((50, 50, 3), dtype=np.uint8)

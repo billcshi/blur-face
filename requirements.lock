@@ -1,7 +1,5 @@
 # Direct runtime dependencies tested for the 2.0 refactor.
 # Install with: python -m pip install -r requirements.lock
-imageio-ffmpeg==0.6.0
 numpy==2.2.6 ; python_version < "3.11"
 numpy==2.4.6 ; python_version >= "3.11"
-opencv-python==4.13.0.92
-ultralytics==8.4.51
+opencv-python-headless==4.13.0.92

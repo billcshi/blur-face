@@ -9,9 +9,6 @@ import tempfile
 import uuid
 from pathlib import Path
 
-import imageio_ffmpeg
-
-
 class EncoderError(RuntimeError):
     """Raised when FFmpeg cannot produce a verified output."""
 
@@ -24,7 +21,12 @@ def _resolve_ffmpeg(explicit: str | Path | None = None) -> str:
             raise EncoderError(f"FFmpeg executable does not exist: {executable}")
         return str(executable)
     system_ffmpeg = shutil.which("ffmpeg")
-    return system_ffmpeg or imageio_ffmpeg.get_ffmpeg_exe()
+    if system_ffmpeg:
+        return system_ffmpeg
+    raise EncoderError(
+        "FFmpeg was not found on PATH; install a system FFmpeg build or "
+        "select one with --ffmpeg"
+    )
 
 
 def _can_encode_nvenc(ffmpeg_exe: str) -> bool:
@@ -73,6 +75,8 @@ class FFmpegEncoder:
         use_nvenc: bool = True,
         overwrite: bool = False,
         ffmpeg_exe: str | Path | None = None,
+        include_audio: bool = True,
+        temporary_directory: str | Path | None = None,
     ):
         if width <= 0 or height <= 0 or fps <= 0:
             raise EncoderError("encoder dimensions and FPS must be positive")
@@ -85,7 +89,16 @@ class FFmpegEncoder:
             )
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         suffix = self.output_path.suffix or ".mp4"
-        self.temp_path = self.output_path.parent / (
+        temp_parent = (
+            Path(temporary_directory).expanduser().resolve()
+            if temporary_directory is not None
+            else self.output_path.parent
+        )
+        if not temp_parent.is_dir():
+            raise EncoderError(
+                f"temporary output directory does not exist: {temp_parent}"
+            )
+        self.temp_path = temp_parent / (
             f".{self.output_path.stem}.{uuid.uuid4().hex}.partial{suffix}"
         )
         self.ffmpeg = _resolve_ffmpeg(ffmpeg_exe)
@@ -96,7 +109,7 @@ class FFmpegEncoder:
             video_codec = ["-c:v", "h264_nvenc", "-preset", "p1", "-cq", "23"]
         else:
             video_codec = ["-c:v", "libx264", "-preset", "fast", "-crf", "23"]
-        self.cmd = [
+        video_input = [
             self.ffmpeg,
             "-hide_banner",
             "-loglevel",
@@ -115,19 +128,29 @@ class FFmpegEncoder:
             str(fps),
             "-i",
             "-",
-            "-i",
-            str(self.audio_source),
+        ]
+        audio_input = ["-i", str(self.audio_source)] if include_audio else []
+        audio_output = (
+            [
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0?",
+            ]
+            if include_audio
+            else ["-an", "-map", "0:v:0"]
+        )
+        self.cmd = [
+            *video_input,
+            *audio_input,
             *video_codec,
             "-pix_fmt",
             "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0?",
+            *audio_output,
             "-movflags",
             "+faststart",
             str(self.temp_path),

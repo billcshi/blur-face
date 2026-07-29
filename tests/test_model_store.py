@@ -11,10 +11,10 @@ class ModelStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             model_directory = Path(directory) / "models"
             model_directory.mkdir()
-            model = model_directory / "yolov11m-face.pt"
+            model = model_directory / "face_detection_yunet_2023mar.onnx"
             model.write_bytes(b"local model")
             resolved = resolve_model(
-                "yolov11m-face.pt",
+                "face_detection_yunet_2023mar.onnx",
                 allow_download=False,
                 search_directories=(model_directory,),
             )
@@ -23,16 +23,18 @@ class ModelStoreTests(unittest.TestCase):
     def test_known_missing_model_uses_verified_downloader(self):
         with tempfile.TemporaryDirectory() as directory:
             model_directory = Path(directory) / "models"
-            expected = model_directory / "yolov11m-face.pt"
+            expected = model_directory / "face_detection_yunet_2023mar.onnx"
             with patch(
                 "blurface.model_store.download_model", return_value=expected
             ) as download:
                 resolved = resolve_model(
-                    "yolov11m-face.pt",
+                    "face_detection_yunet_2023mar.onnx",
                     allow_download=True,
                     search_directories=(model_directory,),
                 )
-            download.assert_called_once_with("yolov11m-face.pt", model_directory)
+            download.assert_called_once_with(
+                "face_detection_yunet_2023mar.onnx", model_directory
+            )
             self.assertEqual(resolved, str(expected))
 
     def test_offline_mode_rejects_missing_model(self):
@@ -41,7 +43,7 @@ class ModelStoreTests(unittest.TestCase):
             self.assertRaises(FileNotFoundError),
         ):
             resolve_model(
-                "yolov11m-face.pt",
+                "face_detection_yunet_2023mar.onnx",
                 allow_download=False,
                 search_directories=(Path(directory),),
             )

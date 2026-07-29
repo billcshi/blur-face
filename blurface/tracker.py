@@ -1,9 +1,9 @@
 """
 blurface.tracker — Lightweight multi-face tracker with smoothing + prediction.
 
-No external tracker dependencies (no supervision, no ultralytics tracker).
+No external tracker dependencies.
 Global motion-aware assignment with exponential smoothing.
-When YOLO misses, uses Lucas-Kanade sparse optical flow to shift
+When the face detector misses, uses Lucas-Kanade sparse optical flow to shift
 the box instead of freezing it.
 """
 
@@ -97,7 +97,7 @@ class FaceTracker:
     - Assigns unique persistent IDs.
     - Smooths bounding box coordinates (exponential moving average).
     - Filters implausible detections by size and aspect ratio.
-    - Optical-flow tracking when YOLO misses (with confirmation gating).
+    - Optical-flow tracking when detection misses (with confirmation gating).
     - Drops tracks after lost_buffer consecutive misses.
 
     Usage:
@@ -449,7 +449,7 @@ class FaceTracker:
         go = good_old.reshape(-1, 2)
 
         # Keep optical-flow prediction conservative. A face ROI usually needs
-        # short-term translation between YOLO corrections; homography can expand
+        # short-term translation between detector corrections; homography can expand
         # boxes badly when a few facial feature points drift.
         dx = np.median(gn[:, 0] - go[:, 0])
         dy = np.median(gn[:, 1] - go[:, 1])
@@ -487,3 +487,7 @@ class FaceTracker:
     def zombie_count(self) -> int:
         """Removed; kept for compatibility. Always returns 0."""
         return 0
+
+    def reset(self) -> None:
+        """Discard all identity and optical-flow history at a scene cut."""
+        self.tracks.clear()

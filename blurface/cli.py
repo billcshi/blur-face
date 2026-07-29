@@ -27,19 +27,6 @@ def parse_time_thresh(raw: str) -> tuple[tuple[float, float], ...]:
     return tuple(sorted(segments))
 
 
-def parse_exclude_ids(raw: str) -> frozenset[int]:
-    if not raw:
-        return frozenset()
-    try:
-        return frozenset(
-            int(value.strip()) for value in raw.split(",") if value.strip()
-        )
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            "expected comma-separated integer IDs"
-        ) from exc
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="blur-face",
@@ -52,7 +39,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Atomically replace an existing output after successful encoding",
     )
-    parser.add_argument("--model", default="yolov11m-face.pt")
+    parser.add_argument(
+        "--detector",
+        choices=("yunet", "yolo"),
+        default="yunet",
+        help=(
+            "Face detector backend: bundled OpenCV YuNet, or explicitly "
+            "installed optional Ultralytics YOLO"
+        ),
+    )
+    parser.add_argument(
+        "--model",
+        default="face_detection_yunet_2023mar.onnx",
+        help="Local detector model (.onnx for YuNet, .pt for YOLO)",
+    )
     parser.add_argument("--thresh", type=float, default=0.3)
     parser.add_argument("--time-thresh", type=parse_time_thresh, default=())
     parser.add_argument("--mask-scale", type=float, default=1.5)
@@ -61,6 +61,65 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("rounded-rect", "rectangle", "ellipse"),
         default="rounded-rect",
         help="Coverage shape (default: rounded-rect)",
+    )
+    parser.add_argument(
+        "--mask-engine",
+        choices=("geometric", "sam2.1"),
+        default="geometric",
+        help="Fast geometric coverage or high-quality SAM 2.1",
+    )
+    parser.add_argument(
+        "--sam-mask-expansion",
+        type=float,
+        default=0.12,
+        help="Face-width fraction added around a SAM mask (default: 0.12)",
+    )
+    parser.add_argument(
+        "--segmentation-combine",
+        choices=("union", "intersection", "mask-only"),
+        default="union",
+        help=(
+            "Union/intersection with detector coverage, or mask-only to use "
+            "the segmentation contour (failures still use geometry)"
+        ),
+    )
+    parser.add_argument(
+        "--sam2-model",
+        default="facebook/sam2.1-hiera-base-plus",
+        help="Local Transformers model directory or SAM 2.1 model ID",
+    )
+    parser.add_argument(
+        "--sam2-refresh-interval",
+        type=int,
+        default=15,
+        help="Face-detector correction interval for SAM tracking (default: 15)",
+    )
+    parser.add_argument(
+        "--temporal-stabilization",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Offline bidirectional mask stabilization for segmentation engines "
+            "(slower; uses bounded temporary storage)"
+        ),
+    )
+    parser.add_argument(
+        "--backfill-frames",
+        type=int,
+        default=10,
+        help="Maximum same-scene reverse repair window (default: 10)",
+    )
+    parser.add_argument(
+        "--release-hold-frames",
+        type=int,
+        default=5,
+        help="Frames to blend aligned mask changes and geometry (default: 5)",
+    )
+    parser.add_argument(
+        "--scene-cut-sensitivity",
+        type=float,
+        default=0.55,
+        help="Scene-cut sensitivity from 0 to 1 (default: 0.55)",
     )
     parser.add_argument(
         "--blur-strategy",
@@ -80,22 +139,40 @@ def build_parser() -> argparse.ArgumentParser:
         default=101,
         help="Minimum kernel used by the adaptive strategy",
     )
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--device",
+        choices=("auto", "cpu", "cuda", "mps"),
+        default="auto",
+        help="SAM compute device; auto uses CUDA when available, otherwise CPU",
+    )
+    parser.add_argument(
+        "--temporal-storage-limit-mb",
+        type=int,
+        default=4096,
+        help="Maximum temporary storage for two-pass masks (default: 4096 MiB)",
+    )
     parser.add_argument(
         "--ffmpeg",
         type=Path,
-        help="FFmpeg executable (default: system FFmpeg, then bundled fallback)",
+        help="FFmpeg executable (default: system FFmpeg on PATH)",
+    )
+    parser.add_argument(
+        "--job-temp-dir",
+        type=Path,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--debug", action="store_true", help="Draw track coverage; do not blur"
     )
-    parser.add_argument("--profile", action="store_true")
-    parser.add_argument("--exclude-ids", type=parse_exclude_ids, default=frozenset())
     parser.add_argument(
-        "--allow-unsafe-exclusions",
+        "--mask-preview",
         action="store_true",
-        help="Acknowledge that temporary track IDs can switch between people",
+        help=(
+            "Write a black diagnostic video with the exact final mask in blue; "
+            "do not render source pixels"
+        ),
     )
+    parser.add_argument("--profile", action="store_true")
     parser.add_argument("--lost-buffer", type=int, default=180)
     parser.add_argument("--smooth", type=float, default=0.7)
     parser.add_argument("--preset", choices=("quality", "fast"), default="quality")
@@ -119,7 +196,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--offline",
         action="store_true",
-        help="Require a local model; never ask YOLO to download one",
+        help="Require all selected models to exist locally",
     )
     return parser
 
@@ -138,20 +215,31 @@ def parse_args(argv: Sequence[str] | None = None) -> AppConfig:
         input=args.input,
         output=args.output,
         overwrite=args.overwrite,
+        detector=args.detector,
         model=args.model,
         threshold=args.thresh,
         time_thresholds=args.time_thresh,
         mask_scale=args.mask_scale,
         mask_shape=args.mask_shape,
+        mask_engine=args.mask_engine,
+        sam_mask_expansion=args.sam_mask_expansion,
+        segmentation_combine=args.segmentation_combine,
+        sam2_model=args.sam2_model,
+        sam2_refresh_interval=args.sam2_refresh_interval,
+        temporal_stabilization=args.temporal_stabilization,
+        backfill_frames=args.backfill_frames,
+        release_hold_frames=args.release_hold_frames,
+        scene_cut_sensitivity=args.scene_cut_sensitivity,
+        temporal_storage_limit_mb=args.temporal_storage_limit_mb,
         blur_strategy=args.blur_strategy,
         blur_kernel=args.blur_kernel,
         blur_kernel_min=args.blur_kernel_min,
         device=args.device,
         ffmpeg=args.ffmpeg,
+        job_temp_dir=args.job_temp_dir,
         debug=args.debug,
+        mask_preview=args.mask_preview,
         profile=args.profile,
-        exclude_ids=args.exclude_ids,
-        allow_unsafe_exclusions=args.allow_unsafe_exclusions,
         lost_buffer=args.lost_buffer,
         smooth=args.smooth,
         preset=args.preset,

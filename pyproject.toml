@@ -4,20 +4,24 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blur-face-local"
-version = "1.0.0"
+version = "1.1.0b1"
 description = "Local-first face anonymization studio for video"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
 dependencies = [
-    "imageio-ffmpeg>=0.6,<0.7",
     "numpy>=2.0,<3",
-    "opencv-python>=4.10,<5",
-    "ultralytics>=8.3,<9",
+    "opencv-python-headless>=4.10,<5",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
+sam2 = [
+    "pillow>=12,<13",
+    "safetensors>=0.8,<1",
+    "transformers>=5.14,<6",
+]
+yolo = ["ultralytics==8.4.51"]
 
 [project.scripts]
 blur-face = "blurface.app:main"
