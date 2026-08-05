@@ -4,9 +4,142 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+import json
 from pathlib import Path
 
-from .config import AppConfig, ConfigError
+from .config import (
+    IMAGE_SUFFIXES,
+    AppConfig,
+    ConfigError,
+    ImageBatchConfig,
+)
+
+INPUT_MANIFEST_MAX_BYTES = 1024 * 1024
+INPUT_MANIFEST_MAX_ITEMS = 10_000
+UNSUPPORTED_IMAGE_SUFFIXES = frozenset(
+    {
+        ".avif",
+        ".dng",
+        ".exr",
+        ".gif",
+        ".heic",
+        ".heif",
+        ".ico",
+        ".j2k",
+        ".jp2",
+        ".jxl",
+        ".psd",
+        ".raw",
+        ".svg",
+        ".svgz",
+    }
+)
+_ISO_IMAGE_BRANDS = frozenset(
+    {
+        b"avif",
+        b"avis",
+        b"heic",
+        b"heix",
+        b"heim",
+        b"heis",
+        b"hevc",
+        b"hevx",
+        b"hevm",
+        b"hevs",
+        b"mif1",
+        b"msf1",
+    }
+)
+_MEDIA_SIGNATURE_LIMIT = 64 * 1024
+
+
+def _xml_doctype_end(value: str, start: int) -> int | None:
+    """Find a bounded DOCTYPE terminator, respecting quotes and subsets."""
+    quote: str | None = None
+    subset_depth = 0
+    index = start
+    while index < len(value):
+        if quote is None and value.startswith("<!--", index):
+            comment_end = value.find("-->", index + 4)
+            if comment_end < 0:
+                return None
+            index = comment_end + 3
+            continue
+        current = value[index]
+        if quote is not None:
+            if current == quote:
+                quote = None
+            index += 1
+            continue
+        if current in {'"', "'"}:
+            quote = current
+        elif current == "[":
+            subset_depth += 1
+        elif current == "]" and subset_depth:
+            subset_depth -= 1
+        elif current == ">" and not subset_depth:
+            return index + 1
+        index += 1
+    return None
+
+
+def _xml_prefix_text(header: bytes) -> str:
+    """Decode a bounded XML prefix with explicit UTF BOM handling."""
+    value = header[:_MEDIA_SIGNATURE_LIMIT]
+    if value.startswith(b"\xff\xfe"):
+        return value[2:].decode("utf-16-le", errors="replace")
+    if value.startswith(b"\xfe\xff"):
+        return value[2:].decode("utf-16-be", errors="replace")
+    if value.startswith(b"\xef\xbb\xbf"):
+        value = value[3:]
+    return value.decode("utf-8", errors="replace")
+
+
+def _xml_root_local_name(header: bytes) -> tuple[bool, str | None]:
+    """Return whether input starts as XML and its bounded root local name."""
+    value = _xml_prefix_text(header).lstrip("\ufeff\t\r\n ")
+    started_as_xml = value.startswith("<")
+    while value:
+        lowered = value.lower()
+        if lowered.startswith("<?xml") or value.startswith("<?"):
+            started_as_xml = True
+            end = value.find("?>")
+            if end < 0:
+                return True, None
+            value = value[end + 2 :].lstrip("\t\r\n ")
+            continue
+        if value.startswith("<!--"):
+            started_as_xml = True
+            end = value.find("-->", 4)
+            if end < 0:
+                return True, None
+            value = value[end + 3 :].lstrip("\t\r\n ")
+            continue
+        if lowered.startswith("<!doctype"):
+            started_as_xml = True
+            end = _xml_doctype_end(value, len("<!doctype"))
+            if end is None:
+                return True, None
+            value = value[end:].lstrip("\t\r\n ")
+            continue
+        break
+    if not value.startswith("<"):
+        return started_as_xml, None
+    name_end = 1
+    while (
+        name_end < len(value)
+        and value[name_end] not in "\x00\t\r\n />"
+    ):
+        name_end += 1
+    qualified_name = value[1:name_end]
+    name_parts = qualified_name.split(":")
+    if (
+        not qualified_name
+        or len(name_parts) > 2
+        or not all(name_parts)
+    ):
+        return True, None
+    return True, name_parts[-1].lower()
 
 
 def parse_time_thresh(raw: str) -> tuple[tuple[float, float], ...]:
@@ -30,10 +163,20 @@ def parse_time_thresh(raw: str) -> tuple[tuple[float, float], ...]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="blur-face",
-        description="Local video face blur with detection, tracking, and optical flow.",
+        description="Local video and image face anonymization.",
     )
-    parser.add_argument("input", type=Path, help="Input video path")
-    parser.add_argument("-o", "--output", type=Path, default=Path("output_blur.mp4"))
+    parser.add_argument(
+        "input",
+        type=Path,
+        nargs="*",
+        help="Input video, image(s), or one image directory",
+    )
+    parser.add_argument(
+        "--input-list",
+        type=Path,
+        help="UTF-8 JSON array of input paths (cannot be combined with inputs)",
+    )
+    parser.add_argument("-o", "--output", type=Path)
     parser.add_argument(
         "--overwrite",
         action="store_true",
@@ -131,13 +274,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--blur-kernel",
         type=int,
         default=251,
-        help="Maximum adaptive kernel, or kernel used by the fixed strategy",
+        help=(
+            "Maximum adaptive kernel, or fixed kernel, at a 1080p baseline; "
+            "high-resolution media scales it up"
+        ),
     )
     parser.add_argument(
         "--blur-kernel-min",
         type=int,
         default=101,
-        help="Minimum kernel used by the adaptive strategy",
+        help=(
+            "Minimum adaptive kernel at a 1080p baseline; high-resolution "
+            "media scales it up"
+        ),
     )
     parser.add_argument(
         "--device",
@@ -201,9 +350,207 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_args(argv: Sequence[str] | None = None) -> AppConfig:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+def read_input_manifest(path: Path) -> tuple[Path, ...]:
+    """Read a bounded JSON path array used by large local UI batches."""
+    manifest = path.expanduser()
+    try:
+        with manifest.open("rb") as stream:
+            encoded = stream.read(INPUT_MANIFEST_MAX_BYTES + 1)
+    except OSError as exc:
+        raise ConfigError(f"cannot read input manifest: {manifest}") from exc
+    if not encoded or len(encoded) > INPUT_MANIFEST_MAX_BYTES:
+        raise ConfigError(
+            f"input manifest must be between 1 and {INPUT_MANIFEST_MAX_BYTES} bytes"
+        )
+    try:
+        payload = json.loads(encoded.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ConfigError(f"invalid UTF-8 JSON input manifest: {manifest}") from exc
+    if not isinstance(payload, list) or not payload:
+        raise ConfigError("input manifest must contain a non-empty JSON array")
+    if len(payload) > INPUT_MANIFEST_MAX_ITEMS:
+        raise ConfigError(
+            f"input manifest cannot contain more than {INPUT_MANIFEST_MAX_ITEMS} paths"
+        )
+    if any(not isinstance(value, str) or not value.strip() for value in payload):
+        raise ConfigError("every input manifest item must be a non-empty path string")
+    return tuple(Path(value) for value in payload)
+
+
+def _media_signature(path: Path) -> str:
+    """Classify common media signatures without importing a decoder."""
+    try:
+        with path.expanduser().open("rb") as stream:
+            header = stream.read(_MEDIA_SIGNATURE_LIMIT)
+            stream.seek(0, 2)
+            file_size = stream.tell()
+    except OSError:
+        return "unknown"
+    if header.startswith(b"\xff\xd8\xff"):
+        return "image"
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image"
+    if header.startswith(b"BM"):
+        return "image"
+    if header.startswith((b"II*\x00", b"MM\x00*")):
+        return "image"
+    if header.startswith((b"GIF87a", b"GIF89a")):
+        return "unsupported-image"
+    if header.startswith(b"\x00\x00\x01\x00"):
+        return "unsupported-image"
+    if header.startswith((b"8BPS", b"\x76\x2f\x31\x01")):
+        return "unsupported-image"
+    if header.startswith(b"\x00\x00\x00\x0cjP  \x0d\x0a\x87\x0a"):
+        return "unsupported-image"
+    if header.startswith((b"\xff\x0a", b"\x00\x00\x00\x0cJXL \x0d\x0a\x87\x0a")):
+        return "unsupported-image"
+    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return "image"
+    if len(header) >= 8 and header[4:8] == b"ftyp":
+        box_size = int.from_bytes(header[:4], "big")
+        brand_offset = 8
+        compatible_offset = 16
+        if box_size == 1:
+            if len(header) < 20:
+                return "ambiguous"
+            box_size = int.from_bytes(header[8:16], "big")
+            brand_offset = 16
+            compatible_offset = 24
+        elif box_size == 0:
+            box_size = file_size
+        available_size = min(len(header), box_size)
+        brands = set()
+        if available_size >= brand_offset + 4:
+            brands.add(header[brand_offset : brand_offset + 4].lower())
+        if brands & _ISO_IMAGE_BRANDS:
+            return "unsupported-image"
+        if (
+            box_size < compatible_offset
+            or box_size > len(header)
+            or (box_size - compatible_offset) % 4 != 0
+        ):
+            return "ambiguous"
+        available_size = box_size
+        if available_size >= compatible_offset + 4:
+            brands.update(
+                header[index : index + 4].lower()
+                for index in range(
+                    compatible_offset, available_size - 3, 4
+                )
+            )
+        if brands & _ISO_IMAGE_BRANDS:
+            return "unsupported-image"
+        return "video"
+    if header.startswith(b"\x1aE\xdf\xa3"):
+        return "video"
+    if header.startswith(b"FLV") or header.startswith(b"OggS"):
+        return "video"
+    if header.startswith(b"RIFF") and header[8:12] == b"AVI ":
+        return "video"
+    if header.startswith((b"\x00\x00\x01\xba", b"\x00\x00\x01\xb3")):
+        return "video"
+    started_as_xml, xml_root = _xml_root_local_name(header)
+    if xml_root == "svg":
+        return "unsupported-image"
+    if started_as_xml:
+        return "ambiguous"
+    return "unknown"
+
+
+def _image_inputs(paths: tuple[Path, ...]) -> tuple[tuple[Path, ...], Path | None]:
+    """Classify and expand image inputs, returning an optional source directory."""
+    directories = [path for path in paths if path.expanduser().is_dir()]
+    if directories:
+        if len(paths) != 1:
+            raise ConfigError("an image directory cannot be mixed with other inputs")
+        directory = directories[0].expanduser()
+        images = tuple(
+            sorted(
+                (
+                    path
+                    for path in directory.iterdir()
+                    if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+                ),
+                key=lambda path: (path.name.casefold(), path.name),
+            )
+        )
+        if not images:
+            raise ConfigError(f"input directory contains no supported images: {directory}")
+        invalid = next(
+            (
+                path
+                for path in images
+                if _media_signature(path)
+                in {"video", "unsupported-image", "ambiguous"}
+            ),
+            None,
+        )
+        if invalid is not None:
+            raise ConfigError(f"file is not a supported image: {invalid}")
+        return images, directory
+    if len(paths) == 1:
+        path = paths[0].expanduser()
+        signature = _media_signature(path)
+        if signature == "video":
+            return (), None
+        if signature == "unsupported-image":
+            raise ConfigError(f"unsupported image format: {path}")
+        if signature == "ambiguous":
+            raise ConfigError(f"ambiguous or unsupported media format: {path}")
+        if path.suffix.lower() in IMAGE_SUFFIXES:
+            return (path,), None
+        if signature == "image" or path.suffix.lower() in UNSUPPORTED_IMAGE_SUFFIXES:
+            raise ConfigError(f"unsupported image filename or format: {path}")
+        # Unknown single-file signatures retain the original decoder-based
+        # video behavior for uncommon containers.
+        return (), None
+    if any(path.suffix.lower() not in IMAGE_SUFFIXES for path in paths):
+        invalid = next(path for path in paths if path.suffix.lower() not in IMAGE_SUFFIXES)
+        raise ConfigError(f"unsupported input format: {invalid}")
+    expanded = tuple(path.expanduser() for path in paths)
+    invalid = next(
+        (
+            path
+            for path in expanded
+            if _media_signature(path)
+            in {"video", "unsupported-image", "ambiguous"}
+        ),
+        None,
+    )
+    if invalid is not None:
+        raise ConfigError(f"file is not a supported image: {invalid}")
+    return expanded, None
+
+
+def _image_destinations(
+    inputs: tuple[Path, ...],
+    source_directory: Path | None,
+    output: Path | None,
+) -> tuple[tuple[Path, ...], Path]:
+    batch = source_directory is not None or len(inputs) > 1
+    if output is None:
+        if batch:
+            if source_directory is not None:
+                output = source_directory.with_name(f"{source_directory.name}_blurred")
+            else:
+                output = inputs[0].parent / f"{inputs[0].stem}_blurred"
+        else:
+            source = inputs[0]
+            output = source.with_name(f"{source.stem}_blurred{source.suffix}")
+    output = output.expanduser()
+    if batch:
+        if output.suffix.lower() in IMAGE_SUFFIXES and not output.is_dir():
+            raise ConfigError("multiple images require an output directory")
+        return tuple(output / source.name for source in inputs), output
+    source = inputs[0]
+    if output.is_dir() or not output.suffix:
+        return (output / source.name,), output
+    if output.suffix.lower() not in IMAGE_SUFFIXES:
+        raise ConfigError(f"unsupported output image format: {output}")
+    return (output,), output.parent
+
+
+def _app_config(args, input_path: Path, output_path: Path) -> AppConfig:
     flow_max_points = args.flow_max_points
     flow_max_missed = args.flow_max_missed
     if args.preset == "fast":
@@ -211,9 +558,9 @@ def parse_args(argv: Sequence[str] | None = None) -> AppConfig:
             flow_max_points = 20
         if flow_max_missed == 0:
             flow_max_missed = 45
-    config = AppConfig(
-        input=args.input,
-        output=args.output,
+    return AppConfig(
+        input=input_path,
+        output=output_path,
         overwrite=args.overwrite,
         detector=args.detector,
         model=args.model,
@@ -252,8 +599,39 @@ def parse_args(argv: Sequence[str] | None = None) -> AppConfig:
         use_nvenc=not args.no_nvenc,
         offline=args.offline,
     )
+
+
+def parse_args(
+    argv: Sequence[str] | None = None,
+) -> AppConfig | ImageBatchConfig:
+    parser = build_parser()
+    args = parser.parse_args(argv)
     try:
-        return config.validate()
+        if args.input_list is not None and args.input:
+            raise ConfigError("--input-list cannot be combined with positional inputs")
+        paths = (
+            read_input_manifest(args.input_list)
+            if args.input_list is not None
+            else tuple(args.input)
+        )
+        if not paths:
+            raise ConfigError("at least one input path is required")
+        image_inputs, source_directory = _image_inputs(paths)
+        if not image_inputs:
+            if len(paths) != 1:
+                raise ConfigError("only one video can be processed at a time")
+            output = args.output or Path("output_blur.mp4")
+            return _app_config(args, paths[0], output).validate()
+        outputs, output_directory = _image_destinations(
+            image_inputs, source_directory, args.output
+        )
+        options = _app_config(args, image_inputs[0], outputs[0])
+        return ImageBatchConfig(
+            options=options,
+            inputs=image_inputs,
+            outputs=outputs,
+            output_directory=output_directory,
+        ).validate()
     except ConfigError as exc:
         parser.error(str(exc))
 

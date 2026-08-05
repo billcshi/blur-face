@@ -1,3 +1,3 @@
-"""Privacy-oriented local video face blurring."""
+"""Privacy-oriented local video and image face blurring."""
 
-__version__ = "1.1.0b1"
+__version__ = "1.2.0"

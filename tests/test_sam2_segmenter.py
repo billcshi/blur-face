@@ -1,5 +1,6 @@
 import unittest
 from contextlib import nullcontext
+import logging
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -9,11 +10,181 @@ from blurface.sam2_segmenter import (
     Sam2Error,
     Sam2Segmenter,
     Sam2VideoSegmenter,
+    _ExpectedImageConfigWarningFilter,
+    _load_pretrained,
     build_safe_sam_mask,
 )
 
 
 class Sam2SegmenterTests(unittest.TestCase):
+    def test_only_expected_image_subset_warning_is_suppressed(self):
+        warning_filter = _ExpectedImageConfigWarningFilter()
+        expected = logging.LogRecord(
+            "transformers.configuration_utils",
+            logging.WARNING,
+            __file__,
+            1,
+            "You are using a model of type `sam2_video` to instantiate a "
+            "model of type `sam2`. This may be expected if you are loading "
+            "a checkpoint that shares a subset of the architecture (e.g., "
+            "loading a `sam2_video` checkpoint into `Sam2Model`), but is "
+            "otherwise not supported and can yield errors. Please verify "
+            "that the checkpoint is compatible with the model you are "
+            "instantiating.",
+            (),
+            None,
+        )
+        unrelated = logging.LogRecord(
+            "transformers.configuration_utils",
+            logging.WARNING,
+            __file__,
+            1,
+            "checkpoint weights are missing",
+            (),
+            None,
+        )
+        extended = logging.LogRecord(
+            "transformers.configuration_utils",
+            logging.WARNING,
+            __file__,
+            1,
+            expected.getMessage() + " Additional diagnostic.",
+            (),
+            None,
+        )
+        error = logging.LogRecord(
+            "transformers.configuration_utils",
+            logging.ERROR,
+            __file__,
+            1,
+            expected.getMessage(),
+            (),
+            None,
+        )
+        self.assertFalse(warning_filter.filter(expected))
+        self.assertTrue(warning_filter.filter(unrelated))
+        self.assertTrue(warning_filter.filter(extended))
+        self.assertTrue(warning_filter.filter(error))
+
+    def test_hf_components_prefer_cache_before_remote_download(self):
+        class LocalEntryNotFoundError(FileNotFoundError):
+            pass
+
+        class Loader:
+            calls = []
+            cached = False
+
+            @classmethod
+            def from_pretrained(cls, _source, **options):
+                cls.calls.append(options["local_files_only"])
+                if options["local_files_only"] and not cls.cached:
+                    try:
+                        raise LocalEntryNotFoundError("not cached")
+                    except LocalEntryNotFoundError as exc:
+                        raise OSError("cache lookup failed") from exc
+                return "loaded"
+
+        self.assertEqual(_load_pretrained(Loader, "org/model", False), "loaded")
+        self.assertEqual(Loader.calls, [True, False])
+        Loader.calls = []
+        Loader.cached = True
+        self.assertEqual(_load_pretrained(Loader, "org/model", False), "loaded")
+        self.assertEqual(Loader.calls, [True])
+        Loader.calls = []
+        Loader.cached = False
+        with self.assertRaisesRegex(OSError, "cache lookup failed"):
+            _load_pretrained(Loader, "org/model", True)
+        self.assertEqual(Loader.calls, [True])
+
+    def test_hf_cache_error_does_not_trigger_remote_download(self):
+        class Loader:
+            calls = []
+
+            @classmethod
+            def from_pretrained(cls, _source, **options):
+                cls.calls.append(options["local_files_only"])
+                raise ValueError("invalid local configuration")
+
+        with self.assertRaisesRegex(ValueError, "invalid local configuration"):
+            _load_pretrained(Loader, "org/model", False)
+        self.assertEqual(Loader.calls, [True])
+
+    @staticmethod
+    def _image_prediction_segmenter(mask, scores):
+        class Tensor:
+            def __init__(self, values):
+                self.values = np.asarray(values)
+
+            def detach(self):
+                return self
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+            def float(self):
+                return self
+
+            def numpy(self):
+                return self.values
+
+        class Inputs(dict):
+            def to(self, _device):
+                return self
+
+        class Processor:
+            def __call__(self, **_kwargs):
+                return Inputs(original_sizes=Tensor([[8, 10]]))
+
+            def post_process_masks(self, *_args, **_kwargs):
+                return [np.asarray(mask)]
+
+        class Model:
+            def __call__(self, **_kwargs):
+                return SimpleNamespace(
+                    pred_masks=Tensor(np.asarray(mask)),
+                    iou_scores=Tensor(np.asarray(scores)),
+                )
+
+        segmenter = Sam2Segmenter.__new__(Sam2Segmenter)
+        segmenter._torch = SimpleNamespace(
+            bfloat16="bfloat16",
+            inference_mode=lambda: nullcontext(),
+            backends=SimpleNamespace(
+                mkldnn=SimpleNamespace(flags=lambda **_kwargs: nullcontext())
+            ),
+        )
+        segmenter.device = SimpleNamespace(type="cpu")
+        segmenter._processor = Processor()
+        segmenter._model = Model()
+        return segmenter
+
+    def test_single_image_mask_still_requires_one_valid_iou_score(self):
+        roi = np.zeros((8, 10, 3), dtype=np.uint8)
+        mask = np.ones((8, 10), dtype=np.float32)
+        for scores in ([], [0.49], [np.nan], [0.9, 0.8]):
+            with self.subTest(scores=scores):
+                segmenter = self._image_prediction_segmenter(mask, scores)
+                with self.assertRaisesRegex(ValueError, "scores"):
+                    segmenter._predict(roi, (1, 1, 9, 7))
+        segmenter = self._image_prediction_segmenter(mask, [0.9])
+        np.testing.assert_array_equal(
+            segmenter._predict(roi, (1, 1, 9, 7)), mask
+        )
+
+    def test_post_processed_image_mask_must_match_roi_shape(self):
+        roi = np.zeros((60, 60, 3), dtype=np.uint8)
+        segmenter = self._image_prediction_segmenter(
+            np.array([[1, 1], [1, 0]], dtype=np.float32),
+            [0.9],
+        )
+        contour = segmenter.build_contour(
+            roi,
+            (10, 10, 50, 50),
+            dilation_ratio=0,
+        )
+        self.assertIsNone(contour)
+        self.assertIn("does not match ROI shape", segmenter.last_error)
+
     def test_safe_mask_always_fills_detector_core(self):
         predicted = np.zeros((12, 16), dtype=np.uint8)
         predicted[1:4, 2:6] = 1
@@ -56,6 +227,20 @@ class Sam2SegmenterTests(unittest.TestCase):
             )
         self.assertIsNone(mask)
         self.assertIn("synthetic SAM failure", segmenter.last_error)
+
+    def test_image_contour_api_does_not_apply_combination_policy(self):
+        segmenter = Sam2Segmenter.__new__(Sam2Segmenter)
+        segmenter.last_error = None
+        predicted = np.zeros((30, 40), dtype=np.uint8)
+        predicted[2:8, 3:10] = 1
+        with patch.object(Sam2Segmenter, "_predict", return_value=predicted):
+            contour = segmenter.build_contour(
+                np.zeros((30, 40, 3), dtype=np.uint8),
+                (15, 12, 35, 28),
+                dilation_ratio=0,
+            )
+        self.assertEqual(contour[4, 5], 255)
+        self.assertEqual(contour[20, 20], 0)
 
     def test_missing_optional_dependency_is_diagnostic(self):
         with patch(

@@ -378,6 +378,42 @@ class PipelineIntegrationTests(unittest.TestCase):
             # status text must remain printable there.
             output_log.getvalue().encode("cp1252")
 
+    def test_streaming_video_uses_resolution_scaled_blur_kernel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mp4"
+            output = root / "output.mp4"
+            writer = cv2.VideoWriter(
+                str(source), cv2.VideoWriter_fourcc(*"mp4v"), 10, (64, 48)
+            )
+            self.assertTrue(writer.isOpened())
+            writer.write(np.full((48, 64, 3), 180, dtype=np.uint8))
+            writer.release()
+            config = AppConfig(
+                input=source,
+                output=output,
+                model="unused.onnx",
+                blur_strategy="fixed",
+                blur_kernel=21,
+                flow_enabled=False,
+                use_nvenc=False,
+                offline=True,
+                min_face_size=1,
+            )
+            with (
+                patch("blurface.config.BLUR_REFERENCE_SHORT_EDGE", 24),
+                patch("blurface.pipeline.FaceDetector", StaticDetector),
+                patch(
+                    "blurface.pipeline.apply_blur", wraps=apply_blur
+                ) as blur,
+                redirect_stdout(io.StringIO()),
+            ):
+                VideoProcessor(config).run()
+            self.assertTrue(blur.called)
+            self.assertTrue(
+                all(call.args[2] == 43 for call in blur.call_args_list)
+            )
+
     def test_mask_preview_contains_only_black_and_final_blue_coverage(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -776,12 +812,15 @@ class PipelineIntegrationTests(unittest.TestCase):
                 sam2_model="local-sam2",
                 segmentation_combine="mask-only",
                 temporal_stabilization=True,
+                blur_strategy="fixed",
+                blur_kernel=21,
                 flow_enabled=False,
                 use_nvenc=False,
                 offline=True,
                 min_face_size=1,
             )
             with (
+                patch("blurface.config.BLUR_REFERENCE_SHORT_EDGE", 24),
                 patch("blurface.pipeline.FaceDetector", FakeDetector),
                 patch("blurface.pipeline.Sam2VideoSegmenter", SparseVideoSam),
                 patch(
@@ -792,6 +831,9 @@ class PipelineIntegrationTests(unittest.TestCase):
                 VideoProcessor(config).run()
             segmented_calls = list(blur.call_args_list)
             self.assertTrue(segmented_calls)
+            self.assertTrue(
+                all(call.args[2] == 43 for call in segmented_calls)
+            )
             self.assertTrue(
                 all(
                     (call.args[1][2] - call.args[1][0])

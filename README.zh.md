@@ -1,12 +1,12 @@
 # Blur Face Local
 
-**离线、本地优先的视频人脸匿名化工具，提供本地网页 UI 和 CLI。**
+**离线、本地优先的视频与图片人脸匿名化工具，提供本地网页 UI 和 CLI。**
 
 [English](README.md) · [版本记录](CHANGELOG.md) ·
 [时序设计](docs/temporal-stabilization.md)
 
-Blur Face 在本机完成视频解码、分析、遮挡和编码。网页只连接
-`127.0.0.1`，不会上传视频帧。
+Blur Face 在本机完成视频或图片的解码、分析、遮挡和写入。网页只连接
+`127.0.0.1`，不会上传媒体内容。
 
 ## 遮挡模式
 
@@ -24,6 +24,19 @@ AGPL-3.0，除非另有 Enterprise 许可；`akanametov/yolo-face` 1.0.0 权重
 按上游声明适用 GPL-3.0 或相应 Enterprise 许可。其训练说明使用 WIDER FACE，
 该数据集自身条款也继续适用。基础环境不会安装 YOLO，也不会因发现 `.pt`
 文件而自动启用。
+
+## 静态图片与批处理
+
+1.2.0 版将相同的检测、几何覆盖、模糊、预览和可选 SAM 策略用于 JPEG、
+PNG、WebP、BMP 与 TIFF 图片。CLI 可接收单张图片、多张图片路径，或一个
+非递归图片目录。本地工作台增加双语的“视频 / 图片”选择，以及原生的多图
+和输出文件夹选择器。整批任务只加载一次检测器和可选 SAM 模型，内存中只
+保留当前图片的工作数据。
+
+每张完成的图片都会原子提交；未开启 `--overwrite` 时，处理中途新出现的
+目标文件不会被替换。输出图片有意不复制 EXIF 等源文件元数据，也因此移除
+其中可能包含的位置和相机信息。PNG、WebP 和 TIFF 的透明通道会保留；若为
+带透明通道的图片选择无法保留透明度的输出格式，任务会失败且不会提交该文件。
 
 ## 快速开始
 
@@ -54,11 +67,13 @@ chmod +x init.sh start-ui.sh
 `init.bat` 会先说明 Gyan 完整版是体积较大的外部 GPL 软件，再询问是否通过
 WinGet 安装；Unix 初始化只提示系统包依赖。
 
-初始化会说明可选 YOLO 的许可证边界并询问是否安装。选择“否”后仍是精简的
-MIT/Apache 默认 YuNet 环境。也可以稍后运行：
+Windows 初始化会分别明确询问是否安装可选 YOLO 检测器和 SAM 2.1 mask
+引擎。选择“否”后仍是精简的 MIT/Apache 默认 YuNet 几何环境；CI 会跳过
+这两个提示。也可以稍后运行：
 
 ```powershell
 .\install-yolo.bat
+.\install-sam2.bat
 ```
 
 ```bash
@@ -70,7 +85,7 @@ SHA-256 固定校验的 `yolov11m-face.pt`。确认前会明确显示该权重�
 GPL-3.0/Enterprise 边界和 WIDER FACE 训练数据来源。CI 和非交互初始化
 默认跳过 YOLO；准确的上游链接见 `THIRD_PARTY_NOTICES.md`。
 
-普通初始化完成后，如需 SAM，再运行：
+Linux/macOS 初始化后，或 Windows 提示中选择跳过后，如需 SAM 可运行：
 
 ```powershell
 .\install-sam2.bat
@@ -81,14 +96,15 @@ GPL-3.0/Enterprise 边界和 WIDER FACE 训练数据来源。CI 和非交互初�
 ```
 
 SAM 安装器在检测到 NVIDIA 时安装已测试的 CUDA 运行时，否则安装 CPU
-运行时，并显示各阶段耗时。命名的 SAM checkpoint 可以在模型初始化阶段、
-开始分析视频之前下载；缓存后可启用离线模式，也可选择本地模型目录。
+运行时。命名的 SAM checkpoint 可以在模型初始化阶段、分析开始之前下载；
+缓存后可启用离线模式，也可选择本地模型目录。
 
 普通 `git pull` 不需要重新初始化，除非依赖 lock 文件或安装脚本发生变化。
 
 ## 本地工作台
 
-主界面只保留输入、输出、遮挡模式和隐私预设。没有安装可选 YOLO 时，遮挡
+主界面保留媒体类型、输入、输出、遮挡模式和隐私预设。图片模式可选择一张
+或多张本机图片及输出文件夹，视频模式保持原有单输入/输出流程。没有安装可选 YOLO 时，遮挡
 模式中只有“快速几何 · YuNet”和“SAM 高质量 · YuNet”两项；完整安装 YOLO
 后，同一个选择框会增加“快速几何 · YOLO”和“SAM · YOLO”。展开
 “**高级参数**”后，只显示与所选引擎相关的设置：
@@ -152,6 +168,10 @@ mask 和 SQLite 元数据默认有 4096 MiB 硬上限，并在成功、失败或
 
 ```bash
 .venv/bin/blur-face input.mov -o output.mp4 --overwrite
+
+.venv/bin/blur-face portrait.jpg -o portrait_blurred.jpg
+.venv/bin/blur-face first.jpg second.png -o blurred-images/
+.venv/bin/blur-face photos/ -o blurred-images/
 ```
 
 常用默认值：
@@ -178,14 +198,26 @@ mask 和 SQLite 元数据默认有 4096 MiB 硬上限，并在成功、失败或
 
 运行 `blur-face --help` 查看全部追踪、模糊、编码和离线参数。
 
+SAM checkpoint 首次使用时可能在分析开始前下载；后续任务会先尝试完整的
+本地缓存，不会仅为检查更新而访问 Hub。勾选离线模式可强制只用缓存，也可
+选择本地模型目录。UI 的每个任务是独立进程，因此每个任务会加载一次权重；
+同一个图片批次内则会复用这一个模型实例。
+
+公开 Hugging Face checkpoint 无需账号。可选执行 Windows 的
+`.venv\Scripts\hf.exe auth login`（Linux/macOS 为 `.venv/bin/hf auth login`），
+可去除首次下载时的未认证提示并提高 Hub 限速；凭据由 Hugging Face 客户端
+管理，本程序不会读取或保存 token。
+
 ## 隐私与输出安全
 
-- 自动检测器无法保证 100% 召回；发布敏感视频前必须检查结果。
+- 自动检测器无法保证 100% 召回；发布敏感视频或图片前必须检查结果。
 - 所有模型初始化都在处理第一帧之前完成。
 - 编码失败不会替换目标文件。只有 FFmpeg 成功退出且生成非空文件后，才会
   原子提交输出。
-- UI 在输出目录旁创建唯一作业目录；普通异常、取消以及强制终止进程树后都会
-  清理其中的 mask、运动代理和 partial 输出。
+- 图片输出逐文件遵循相同的无残缺提交规则。批处理失败或取消时，已经完成的
+  图片会保留，但当前未完成图片绝不会提交。
+- UI 在目标文件系统创建唯一作业目录（图片任务位于输出文件夹内）；普通异常、
+  取消以及强制终止进程树后都会清理其中的 mask、运动代理和 partial 输出。
 - FFmpeg 是用户提供的外部系统工具，本项目不捆绑；其许可证取决于用户选择的
   FFmpeg 构建。
 

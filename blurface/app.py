@@ -23,11 +23,18 @@ def main() -> int:
     _configure_console_stream(sys.stderr)
     try:
         config = parse_args()
-        # Keep argument help and validation available before heavy video/ML
+        # Keep argument help and validation available before heavy media/ML
         # dependencies are imported.
-        from .pipeline import VideoProcessor
+        from .config import ImageBatchConfig
 
-        VideoProcessor(config).run()
+        if isinstance(config, ImageBatchConfig):
+            from .image_pipeline import ImageProcessor
+
+            ImageProcessor(config).run()
+        else:
+            from .pipeline import VideoProcessor
+
+            VideoProcessor(config).run()
         return 0
     except KeyboardInterrupt:
         print("\nCancelled; incomplete output was not committed.", file=sys.stderr)

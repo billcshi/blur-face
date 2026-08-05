@@ -7,8 +7,23 @@ from blurface.config import AppConfig, ConfigError
 
 
 class ConfigTests(unittest.TestCase):
-    def test_beta_release_version(self):
-        self.assertEqual(__version__, "1.1.0b1")
+    def test_release_version(self):
+        self.assertEqual(__version__, "1.2.0")
+
+    def test_release_version_is_consistent_in_metadata_and_documentation(self):
+        root = Path(__file__).resolve().parents[1]
+        expected = __version__
+        checks = {
+            "pyproject.toml": f'version = "{expected}"',
+            "CHANGELOG.md": f"## {expected} —",
+            "README.md": f"Version {expected}",
+            "README.zh.md": f"{expected} 版",
+            "docs/image-batch-processing.md": f"Version {expected}",
+        }
+        for relative, marker in checks.items():
+            with self.subTest(path=relative):
+                contents = (root / relative).read_text(encoding="utf-8")
+                self.assertIn(marker, contents)
 
     def test_privacy_defaults_use_strong_blur(self):
         config = AppConfig(Path("in.mp4"))
@@ -47,6 +62,28 @@ class ConfigTests(unittest.TestCase):
         ).validate()
         self.assertEqual(config.blur_kernel_for(0.3, 0.3), 51)
         self.assertEqual(config.blur_kernel_for(0.99, 0.3), 51)
+
+    def test_blur_strength_scales_above_a_1080p_short_edge(self):
+        config = AppConfig(
+            Path("in.mp4"), blur_strategy="fixed", blur_kernel=251
+        )
+        for shape in ((1080, 1920), (1920, 1080), (720, 1280)):
+            with self.subTest(shape=shape):
+                self.assertEqual(
+                    config.blur_kernel_for_frame(0.9, 0.3, shape), 251
+                )
+        for shape in ((2160, 3840), (3840, 2160)):
+            with self.subTest(shape=shape):
+                self.assertEqual(
+                    config.blur_kernel_for_frame(0.9, 0.3, shape), 503
+                )
+
+    def test_frame_relative_blur_rejects_invalid_dimensions(self):
+        config = AppConfig(Path("in.mp4"))
+        with self.assertRaisesRegex(ConfigError, "height and width"):
+            config.blur_kernel_for_frame(0.9, 0.3, (1080,))
+        with self.assertRaisesRegex(ConfigError, "positive"):
+            config.blur_kernel_for_frame(0.9, 0.3, (0, 1920))
 
     def test_mask_only_segmentation_policy_is_valid(self):
         config = AppConfig(

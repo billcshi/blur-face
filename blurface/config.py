@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 
 class ConfigError(ValueError):
     """Raised when a user supplied configuration is unsafe or invalid."""
+
+
+IMAGE_SUFFIXES = frozenset(
+    {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+)
+BLUR_REFERENCE_SHORT_EDGE = 1080
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +178,28 @@ class AppConfig:
         )
         return self._odd_kernel(value)
 
+    def blur_kernel_for_frame(
+        self,
+        confidence: float,
+        threshold: float,
+        frame_shape: tuple[int, int],
+    ) -> int:
+        """Scale the shared 1080p blur strength for high-resolution media."""
+        if len(frame_shape) != 2:
+            raise ConfigError("frame shape must contain height and width")
+        height, width = (int(value) for value in frame_shape)
+        if height <= 0 or width <= 0:
+            raise ConfigError("frame dimensions must be positive")
+        base_kernel = self.blur_kernel_for(confidence, threshold)
+        # UI/CLI kernel values remain a 1080p baseline. Scaling by the short
+        # edge is orientation-independent: 1920x1080 and 1080x1920 retain the
+        # same strength, while high-resolution images and videos do not become
+        # perceptually weaker merely because they contain more pixels.
+        resolution_scale = max(
+            1.0, min(height, width) / BLUR_REFERENCE_SHORT_EDGE
+        )
+        return self._odd_kernel(round(base_kernel * resolution_scale))
+
     @staticmethod
     def _odd_kernel(value: int) -> int:
         return value if value % 2 else value + 1
@@ -188,3 +217,46 @@ class AppConfig:
             else:
                 break
         return threshold
+
+
+@dataclass(frozen=True, slots=True)
+class ImageBatchConfig:
+    """Validated still-image sources and their deterministic destinations."""
+
+    options: AppConfig
+    inputs: tuple[Path, ...]
+    outputs: tuple[Path, ...]
+    output_directory: Path
+
+    def validate(self) -> ImageBatchConfig:
+        if not self.inputs or len(self.inputs) != len(self.outputs):
+            raise ConfigError("image batch inputs and outputs must be non-empty pairs")
+        self.options.validate()
+        output_keys: set[str] = set()
+        for source, output in zip(self.inputs, self.outputs):
+            if not source.expanduser().is_file():
+                raise ConfigError(f"input image does not exist: {source}")
+            if source.suffix.lower() not in IMAGE_SUFFIXES:
+                raise ConfigError(f"unsupported input image format: {source}")
+            if output.suffix.lower() not in IMAGE_SUFFIXES:
+                raise ConfigError(f"unsupported output image format: {output}")
+            if source.expanduser().resolve() == output.expanduser().resolve():
+                raise ConfigError(f"input and output must be different files: {source}")
+            key = os.path.normcase(str(output.expanduser().resolve())).casefold()
+            if key in output_keys:
+                raise ConfigError(f"multiple inputs map to the same output: {output}")
+            output_keys.add(key)
+            if os.path.lexists(output.expanduser()) and not self.options.overwrite:
+                raise ConfigError(
+                    f"output already exists; use --overwrite to replace it: {output}"
+                )
+        if os.path.lexists(self.output_directory.expanduser()) and not (
+            self.output_directory.expanduser().is_dir()
+        ):
+            raise ConfigError(
+                f"image batch output directory is not a directory: "
+                f"{self.output_directory}"
+            )
+        if self.options.time_thresholds:
+            raise ConfigError("--time-thresh is available only for video input")
+        return self

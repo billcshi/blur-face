@@ -34,6 +34,87 @@ class WebUiTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 JobManager._cleanup_job_temp(Path(directory))
 
+    def test_ui_cleanup_rejects_symlink_without_touching_target(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("symbolic links are unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            victim = root / ".blur-face-job-victim"
+            victim.mkdir()
+            private = victim / "private-mask.png"
+            private.write_bytes(b"private")
+            link = root / ".blur-face-job-link"
+            try:
+                link.symlink_to(victim, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"cannot create symbolic link: {exc}")
+            with self.assertRaisesRegex(RuntimeError, "ordinary directory"):
+                JobManager._cleanup_job_temp(link)
+            self.assertEqual(private.read_bytes(), b"private")
+            self.assertTrue(link.is_symlink())
+
+    def test_ui_cleanup_rejects_replaced_owned_directory_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job = root / ".blur-face-job-owned"
+            job.mkdir()
+            identity = JobManager._job_directory_identity(job)
+            original = root / ".blur-face-job-original"
+            job.rename(original)
+            job.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "changed before cleanup"):
+                JobManager._cleanup_job_temp(job, identity)
+            self.assertTrue(job.is_dir())
+
+    @unittest.skipIf(os.name == "nt", "POSIX dirfd creation race regression")
+    def test_ui_job_creation_does_not_resolve_a_replaced_symlink(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("symbolic links are unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "image.png"
+            source.touch()
+            output = root / "output"
+            output.mkdir()
+            victim = root / ".blur-face-job-victim"
+            victim.mkdir()
+            private = victim / "unowned.txt"
+            private.write_bytes(b"private")
+
+            real_mkdir = os.mkdir
+
+            def replaced_job(path, mode=0o777, *, dir_fd=None):
+                if dir_fd is None:
+                    return real_mkdir(path, mode)
+                selected = output / str(path)
+                original = output / ".blur-face-job-original"
+                real_mkdir(selected)
+                selected.rename(original)
+                try:
+                    selected.symlink_to(victim, target_is_directory=True)
+                except OSError as exc:
+                    self.skipTest(f"cannot create symbolic link: {exc}")
+
+            payload = {
+                "media_type": "images",
+                "inputs": [str(source)],
+                "output": str(output),
+                "threshold": 0.3,
+                "mask_scale": 1.5,
+                "mask_shape": "rounded-rect",
+                "blur_strategy": "adaptive",
+                "blur_kernel": 251,
+                "blur_kernel_min": 101,
+                "min_face_size": 30,
+                "preset": "quality",
+                "mask_engine": "geometric",
+                "sam_mask_expansion": 0.12,
+            }
+            with patch("blurface.webui.os.mkdir", side_effect=replaced_job):
+                with self.assertRaisesRegex(RuntimeError, "ordinary directory"):
+                    JobManager().start(payload)
+            self.assertEqual(private.read_bytes(), b"private")
+
     def test_force_stop_kills_the_whole_process_group(self):
         process = Mock(pid=12345)
         process.wait.side_effect = [
@@ -49,6 +130,64 @@ class WebUiTests(unittest.TestCase):
             with patch("blurface.webui.os.killpg") as kill_group:
                 JobManager._force_stop(process)
             kill_group.assert_called_once_with(12345, signal.SIGKILL)
+
+    def test_ui_child_output_encoding_matches_utf8_reader(self):
+        process = Mock(stdout=[])
+        process.wait.return_value = 0
+        jobs = JobManager()
+        parent_anchor = Mock()
+        job_anchor = Mock()
+        with (
+            patch("blurface.webui.subprocess.Popen", return_value=process) as popen,
+            patch.object(jobs, "_cleanup_job_temp"),
+        ):
+            jobs._run(
+                ["blur-face"],
+                Path(".blur-face-job-test"),
+                (1, 2),
+                parent_anchor,
+                job_anchor,
+            )
+        self.assertEqual(
+            popen.call_args.kwargs["env"]["PYTHONIOENCODING"],
+            "utf-8:backslashreplace",
+        )
+        job_anchor.close.assert_called_once_with()
+        parent_anchor.close.assert_called_once_with()
+
+    def test_starting_state_recovers_when_parent_anchor_setup_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output.mp4"
+            payload = {"output": str(output)}
+
+            identity_jobs = JobManager()
+            with (
+                patch("blurface.webui.build_command", return_value=["blur-face"]),
+                patch.object(
+                    identity_jobs,
+                    "_job_directory_identity",
+                    side_effect=RuntimeError("identity failure"),
+                ) as identity,
+            ):
+                for _attempt in range(2):
+                    with self.assertRaisesRegex(RuntimeError, "identity failure"):
+                        identity_jobs.start(payload)
+                    self.assertEqual(identity_jobs.snapshot()["status"], "failed")
+            self.assertEqual(identity.call_count, 2)
+
+            anchor_jobs = JobManager()
+            with (
+                patch("blurface.webui.build_command", return_value=["blur-face"]),
+                patch(
+                    "blurface.webui._UiDirectoryAnchor",
+                    side_effect=RuntimeError("anchor failure"),
+                ) as anchor,
+            ):
+                for _attempt in range(2):
+                    with self.assertRaisesRegex(RuntimeError, "anchor failure"):
+                        anchor_jobs.start(payload)
+                    self.assertEqual(anchor_jobs.snapshot()["status"], "failed")
+            self.assertEqual(anchor.call_count, 2)
 
     def test_shutdown_stops_active_job_and_cleans_owned_directory(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -76,6 +215,109 @@ class WebUiTests(unittest.TestCase):
             worker.join.assert_called_once_with(timeout=12)
             self.assertFalse(job_temp.exists())
             self.assertEqual(jobs.snapshot()["status"], "cancelling")
+
+    def test_shutdown_reloads_job_ownership_after_worker_join(self):
+        with tempfile.TemporaryDirectory() as directory:
+            job_temp = Path(directory) / ".blur-face-job-finished"
+            job_temp.mkdir()
+            jobs = JobManager()
+            worker = Mock()
+            worker.is_alive.return_value = False
+            jobs._worker = worker
+            jobs._job_temp = job_temp
+            jobs._job_temp_identity = (1, 2)
+            jobs._job_parent_anchor = Mock()
+            jobs._job_anchor = Mock()
+
+            def worker_finished(*_args, **_kwargs):
+                job_temp.rmdir()
+                with jobs._lock:
+                    jobs._job_temp = None
+                    jobs._job_temp_identity = None
+                    jobs._job_parent_anchor = None
+                    jobs._job_anchor = None
+
+            worker.join.side_effect = worker_finished
+            with patch.object(jobs, "_cleanup_job_temp") as cleanup:
+                jobs.shutdown()
+            cleanup.assert_not_called()
+            self.assertFalse(job_temp.exists())
+
+    def test_windows_cleanup_is_idempotent_after_worker_removed_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / ".blur-face-job-removed"
+            anchor = Mock(dir_fd=None)
+            with patch("blurface.webui._is_windows", return_value=True):
+                JobManager._cleanup_job_temp(missing, (1, 2), job_anchor=anchor)
+            anchor.close.assert_called_once_with()
+
+    def test_image_job_manifest_is_owned_inside_output_and_cleaned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "image.png"
+            image.touch()
+            output = root / "out"
+            payload = {
+                "media_type": "images",
+                "inputs": [str(image)],
+                "output": str(output),
+                "threshold": 0.3,
+                "mask_scale": 1.5,
+                "mask_shape": "rounded-rect",
+                "blur_strategy": "adaptive",
+                "blur_kernel": 251,
+                "blur_kernel_min": 101,
+                "min_face_size": 30,
+                "preset": "quality",
+                "mask_engine": "geometric",
+                "sam_mask_expansion": 0.12,
+            }
+            worker = Mock()
+            worker.is_alive.return_value = False
+            jobs = JobManager()
+            with patch("blurface.webui.threading.Thread", return_value=worker):
+                jobs.start(payload)
+            self.assertEqual(jobs.snapshot()["media_type"], "images")
+            job_temp = jobs._job_temp
+            self.assertIsNotNone(job_temp)
+            self.assertEqual(job_temp.parent, output.resolve())
+            self.assertTrue((job_temp / "inputs.json").is_file())
+            jobs.shutdown()
+            self.assertFalse(job_temp.exists())
+
+    @unittest.skipIf(os.name == "nt", "Windows parent handle prevents rename")
+    def test_image_manifest_is_cleaned_after_output_parent_is_moved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "image.png"
+            image.touch()
+            output = root / "out"
+            payload = {
+                "media_type": "images",
+                "inputs": [str(image)],
+                "output": str(output),
+                "threshold": 0.3,
+                "mask_scale": 1.5,
+                "mask_shape": "rounded-rect",
+                "blur_strategy": "adaptive",
+                "blur_kernel": 251,
+                "blur_kernel_min": 101,
+                "min_face_size": 30,
+                "preset": "quality",
+                "mask_engine": "geometric",
+                "sam_mask_expansion": 0.12,
+            }
+            worker = Mock()
+            worker.is_alive.return_value = False
+            jobs = JobManager()
+            with patch("blurface.webui.threading.Thread", return_value=worker):
+                jobs.start(payload)
+            job_name = jobs._job_temp.name
+            self.assertTrue((output / job_name / "inputs.json").is_file())
+            moved = root / "moved"
+            output.rename(moved)
+            jobs.shutdown()
+            self.assertFalse((moved / job_name).exists())
 
     def test_ui_main_shutdown_calls_job_manager_shutdown(self):
         source = Path(__file__).resolve().parents[1] / "blurface" / "webui.py"
@@ -227,6 +469,39 @@ class WebUiTests(unittest.TestCase):
                     }
                 )
 
+    def test_build_command_uses_manifest_for_multi_image_ui_batch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "一.png"
+            second = root / "two.jpg"
+            first.touch()
+            second.touch()
+            manifest = root / "inputs.json"
+            manifest.write_text("[]", encoding="utf-8")
+            command = build_command(
+                {
+                    "media_type": "images",
+                    "inputs": [str(first), str(second)],
+                    "output": str(root / "out"),
+                    "threshold": 0.3,
+                    "mask_scale": 1.5,
+                    "mask_shape": "rounded-rect",
+                    "blur_strategy": "adaptive",
+                    "blur_kernel": 251,
+                    "blur_kernel_min": 101,
+                    "min_face_size": 30,
+                    "preset": "quality",
+                    "mask_engine": "geometric",
+                    "sam_mask_expansion": 0.12,
+                },
+                input_manifest=manifest,
+            )
+            self.assertEqual(
+                command[command.index("--input-list") + 1], str(manifest)
+            )
+            self.assertNotIn(str(first), command)
+            self.assertNotIn(str(second), command)
+
     def test_ui_has_no_remote_assets_or_upload_control(self):
         html = _UI_FILE.read_text(encoding="utf-8")
         self.assertNotIn("https://", html)
@@ -257,6 +532,14 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('id="sam2-refresh-interval"', html)
         self.assertIn('id="temporal-stabilization"', html)
         self.assertIn('id="mask-preview"', html)
+        self.assertIn('id="media-type"', html)
+        self.assertIn('value="images"', html)
+        self.assertIn("Images (single or batch)", html)
+        self.assertIn("图片（单张或批量）", html)
+        self.assertIn("selectedImageInputs", html)
+        self.assertIn('media_type: $("media-type").value', html)
+        self.assertIn('data.media_type === "images"', html)
+        self.assertIn('$("media-type").disabled = running', html)
         self.assertIn("Mask diagnostic video", html)
         self.assertIn("遮挡区域测试视频", html)
         self.assertIn('id="backfill-frames"', html)
@@ -271,6 +554,10 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('value="mask-only"', html)
         self.assertIn("SAM contour only", html)
         self.assertIn("仅 SAM 轮廓", html)
+        self.assertIn('imageSegmentationCombineHelp: "Union adds the current detected-face geometry', html)
+        self.assertIn('imageSegmentationCombineHelp: "并集把当前检测到的人脸几何范围', html)
+        self.assertIn('segmentationCombineHelp: "imageSegmentationCombineHelp"', html)
+        self.assertIn("keys.segmentationCombineHelp", html)
         self.assertIn('data-help="maskEngineHelp"', html)
         self.assertIn("/api/pick-sam2-model", html)
         self.assertIn("OpenCV YuNet", html)

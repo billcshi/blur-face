@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.2.0 — Still images and batch processing
+
+- Added single-image and bounded batch-image face anonymization with JPEG,
+  PNG, WebP, BMP, and TIFF support.
+- Reused the existing YuNet/optional YOLO detection, geometric coverage,
+  adaptive blur, mask preview, and fail-closed optional SAM 2.1 policies.
+- Added CLI multi-image and directory inputs plus bounded JSON input manifests
+  for large Windows-safe batches.
+- Added bilingual Video / Images modes to Local Studio, including native
+  multi-image and output-folder pickers and image-aware option visibility.
+- Windows initialization now explicitly offers the optional SAM 2.1 install,
+  with CI and opt-out environment variables retaining the lean default.
+- Hardened audited image paths: reject wrong-size post-processed SAM contours,
+  honor alpha-image EXIF orientation, disambiguate media signatures, and make
+  UI shutdown cleanup and job progress media-aware.
+- Apply transparent TIFF orientation exactly once, reject bounded ambiguous
+  XML/ISO media, and keep Unicode image progress safe on legacy consoles.
+- Fail closed on malformed detector coordinates and partial ISO brands, reject
+  Windows directory reparse points, and release each completed image buffer
+  before processing the next batch item. Recover UI startup state when parent
+  directory identity or anchoring fails.
+- Prefer complete cached SAM snapshots before Hub access, suppress the expected
+  image-subset checkpoint warning, and remove broken Windows timing expansion
+  from the optional SAM installer.
+- Load detector and optional SAM model once per batch while keeping only the
+  current image and mask working set in memory.
+- Normalize the shared image/video blur kernel from a 1080p short-edge
+  baseline so high-resolution photos and videos retain equivalent strength.
+- Added per-image atomic output, race-safe no-overwrite commits, job-owned
+  temporary files, and forced-cancellation cleanup.
+- Anchored validated output directories and hardened UI cleanup against
+  symlink, junction, and replaced-directory redirection.
+- Image output deliberately omits EXIF and other source metadata while
+  preserving PNG, WebP, and TIFF transparency.
+
 ## 1.1.0 beta 1 — Offline SAM masks
 
 - Replaced Ultralytics/YOLO with the MIT-licensed OpenCV YuNet model and

@@ -30,7 +30,7 @@
       color: var(--text);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     }
-    button, input, select { font: inherit; }
+    button, input, select, textarea { font: inherit; }
     .shell { width: min(1440px, calc(100% - 32px)); margin: 0 auto; padding: 30px 0 44px; }
     header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
     .brand { display: flex; align-items: center; gap: 14px; }
@@ -85,12 +85,13 @@
     }
     .help:hover::after, .help:focus::after { opacity: 1; transform: translateY(0); }
     .path-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-    input, select {
+    input, select, textarea {
       width: 100%; min-height: 42px; border-radius: 11px; border: 1px solid var(--line);
       background: #0e1216; color: var(--text); padding: 9px 11px; outline: none;
       transition: border-color .15s, box-shadow .15s;
     }
-    input:focus, select:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px rgba(54,188,140,.1); }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px rgba(54,188,140,.1); }
+    textarea { resize: vertical; }
     button {
       border: 0; border-radius: 11px; min-height: 42px; padding: 9px 14px;
       cursor: pointer; color: var(--text); background: #242c35; transition: transform .12s, background .12s, opacity .12s;
@@ -197,9 +198,16 @@
         </div>
         <div class="body">
           <div class="field">
+            <label for="media-type" class="label-line"><span data-i18n="mediaType">Media type</span><span class="help" tabindex="0" data-help="mediaTypeHelp">?</span></label>
+            <select id="media-type">
+              <option value="video" data-i18n="videoMode">Video</option>
+              <option value="images" data-i18n="imageMode">Images (single or batch)</option>
+            </select>
+          </div>
+          <div class="field">
             <label for="input" class="label-line"><span data-i18n="inputLabel">Input video</span><span class="help" tabindex="0" data-help="inputHelp">?</span></label>
             <div class="path-row">
-              <input id="input" placeholder="Choose a local video file" data-i18n-placeholder="inputPlaceholder">
+              <textarea id="input" rows="2" placeholder="Choose a local video file" data-i18n-placeholder="inputPlaceholder"></textarea>
               <button id="pick-input" data-i18n="pickInput">Choose video</button>
             </div>
           </div>
@@ -265,7 +273,7 @@
                 <button id="pick-sam2-model" data-i18n="pickSam2Model">Choose local folder</button>
               </div>
             </div>
-            <div class="field sam2-option hidden">
+            <div class="field sam2-option video-only hidden">
               <label for="sam2-refresh-interval" class="label-line"><span data-i18n="sam2RefreshInterval">Detector correction interval</span><span class="help" tabindex="0" data-help="sam2RefreshIntervalHelp">?</span></label>
               <input id="sam2-refresh-interval" type="number" min="1" step="1" value="15">
             </div>
@@ -278,7 +286,7 @@
                 <option value="mps">MPS</option>
               </select>
             </div>
-            <div class="field span-2 sam2-option hidden">
+            <div class="field span-2 sam2-option video-only hidden">
               <label class="check"><input id="temporal-stabilization" type="checkbox" checked><span data-i18n="temporalStabilization">Temporal stabilization</span><span class="help" tabindex="0" data-help="temporalStabilizationHelp">?</span></label>
             </div>
             <div class="field temporal-option hidden">
@@ -332,7 +340,7 @@
               <label for="min-face-size" class="label-line"><span data-i18n="minFaceSize">Minimum face size</span><span class="help" tabindex="0" data-help="minFaceSizeHelp">?</span></label>
               <input id="min-face-size" type="number" min="1" step="1" value="30">
             </div>
-            <div class="field">
+            <div class="field video-only">
               <label for="tracking-preset" class="label-line"><span data-i18n="tracking">Tracking preset</span><span class="help" tabindex="0" data-help="trackingHelp">?</span></label>
               <select id="tracking-preset">
                 <option value="quality">Quality</option>
@@ -344,7 +352,7 @@
               <label class="check"><input id="mask-preview" type="checkbox"><span data-i18n="maskPreview">Mask diagnostic video</span><span class="help" tabindex="0" data-help="maskPreviewHelp">?</span></label>
               <label class="check"><input id="overwrite" type="checkbox" checked><span data-i18n="overwrite">Allow atomic overwrite</span><span class="help" tabindex="0" data-help="overwriteHelp">?</span></label>
               <label class="check sam2-option hidden"><input id="offline" type="checkbox"><span data-i18n="offline">Require offline SAM model</span><span class="help" tabindex="0" data-help="offlineHelp">?</span></label>
-              <label class="check"><input id="no-nvenc" type="checkbox"><span data-i18n="noNvenc">Disable NVENC</span><span class="help" tabindex="0" data-help="noNvencHelp">?</span></label>
+              <label class="check video-only"><input id="no-nvenc" type="checkbox"><span data-i18n="noNvenc">Disable NVENC</span><span class="help" tabindex="0" data-help="noNvencHelp">?</span></label>
             </div>
             </div>
           </details>
@@ -387,10 +395,16 @@
       en: {
         title: "Blur Face — Local Studio",
         subtitle: "Local face privacy · Your video stays on your computer",
+        imageSubtitle: "Local face privacy · Your images stay on your computer",
         settingsTitle: "Processing settings",
         settingsHelp: "Choose a local video and privacy level. The UI uses the same pipeline as the CLI.",
+        mediaType: "Media type", videoMode: "Video", imageMode: "Images (single or batch)",
+        mediaTypeHelp: "Choose one video job or a still-image job. Image mode reuses one model load for every selected image.",
         inputLabel: "Input video", inputPlaceholder: "Choose a local video file", pickInput: "Choose video",
         outputLabel: "Output location", outputPlaceholder: "Output MP4 path", pickOutput: "Choose output",
+        imageInputLabel: "Input images", imageInputPlaceholder: "Choose one or more local images", pickImages: "Choose images",
+        imageOutputLabel: "Output folder", imageOutputPlaceholder: "Folder for anonymized images", pickImageOutput: "Choose folder",
+        imageSettingsHelp: "Choose local images and a privacy level. One detector/model instance is reused for the batch.",
         modelLabel: "Detector model", modelsLoading: "Loading local models…", pickModel: "Choose model",
         privacyPresets: "Privacy presets", standard: "Standard",
         standardHelp: "Rounded rectangle · adaptive 101–251", strong: "Strong",
@@ -421,18 +435,23 @@
         kernelMin: "Minimum kernel", kernelMax: "Maximum / fixed kernel",
         maskScale: "Geometry / fallback coverage", threshold: "Detection threshold",
         minFaceSize: "Minimum face size", tracking: "Tracking preset",
-        maskPreview: "Mask diagnostic video",
+        maskPreview: "Mask diagnostic video", maskPreviewImages: "Mask diagnostic images",
         overwrite: "Allow atomic overwrite", offline: "Require offline SAM model",
         noNvenc: "Disable NVENC", start: "Start processing", cancel: "Cancel",
         jobStatus: "Job status",
         jobHelp: "Closing this page does not cancel the job. Use Cancel to stop safely and discard incomplete output.",
         privacyNote: "This page connects only to the local service. Input and output are local paths; no video is uploaded.",
+        imagePrivacyNote: "This page connects only to the local service. Images are read from local paths and are never uploaded.",
         inputHelp: "The source video is read directly from this local path and is never uploaded.",
         outputHelp: "The finished MP4 is written atomically to this local path.",
+        imageInputHelp: "Selected paths stay local. JPEG, PNG, WebP, BMP, and TIFF are supported; source metadata is removed.",
+        imageOutputHelp: "Each completed image is committed atomically to this folder. Existing files require overwrite permission.",
         modelHelp: "The model format must match the selected detector: ONNX for YuNet or PT for optional YOLO. Local model files retain their own license and data terms.",
         maskEngineHelp: "YuNet modes are always available. After the optional YOLO installer completes, two explicit YOLO modes appear. Ultralytics is AGPL-3.0 unless covered by an Enterprise license; the pinned akanametov/yolo-face 1.0.0 weight is offered upstream under GPL-3.0 or applicable Enterprise terms, and its WIDER FACE training-data terms also apply. Fast geometric is single-pass; SAM uses slower offline two-pass stabilization and bounded temporary storage. See THIRD_PARTY_NOTICES.md.",
-        samMaskExpansionHelp: "Expands a valid SAM contour by this fraction of face size before applying the combination policy. Default: 0.12.",
+        imageMaskEngineHelp: "Fast geometric reuses the video coverage renderer. SAM uses one box-prompted contour per detected face and falls back to full configured geometry for every invalid or failed mask. The selected model is loaded once per batch.",
+        samMaskExpansionHelp: "Expands a valid SAM contour by this fraction of face size before applying the combination policy. Default: 0.12; this safety margin is recommended for reliable coverage.",
         segmentationCombineHelp: "Union adds current tracker geometry to the SAM contour and is recommended. Intersection clips SAM to geometry. SAM contour only uses the selected detector for discovery, tracking, prompts, and correction. Invalid, sparse, failed, or drifted masks fall back to geometry in every mode.",
+        imageSegmentationCombineHelp: "Union adds the current detected-face geometry to the SAM contour and is recommended. Intersection clips the contour to that geometry. SAM contour only uses the detector for discovery and the box prompt. Invalid, sparse, failed, or mismatched masks fall back to full configured geometry in every mode.",
         sam2ModelHelp: "Base+ is the recommended first test. Large has the highest official benchmark quality but is slower and uses more VRAM. A named model may download during initialization; offline mode requires it in the Hugging Face cache or a selected local model folder.",
         sam2RefreshIntervalHelp: "Run the selected detector and reseed SAM every N frames. Smaller values discover new faces sooner and correct drift more often; default: 15.",
         deviceHelp: "Auto uses CUDA when available for SAM or optional YOLO. OpenCV YuNet always runs on CPU.",
@@ -443,13 +462,14 @@
         temporalStorageLimitHelp: "Hard limit for proxy frames, masks, and metadata used by two-pass processing. Temporary data is removed after success, failure, or UI cancellation.",
         maskShapeHelp: "Used directly by geometric mode and as fail-closed coverage when SAM is invalid or unavailable.",
         blurStrategyHelp: "Adaptive scales blur with detector confidence. Fixed uses the maximum kernel for every face.",
-        kernelMinHelp: "Weakest odd Gaussian kernel used by adaptive blur. Larger values hide more detail.",
-        kernelMaxHelp: "Strongest adaptive kernel, or the single kernel used in fixed mode.",
-        maskScaleHelp: "Expands geometric and SAM-fallback coverage. 1.5 means 50% larger in width and height.",
+        kernelMinHelp: "Weakest odd Gaussian kernel used by adaptive blur at a 1080p baseline. High-resolution videos and images scale it up automatically; larger values hide more detail.",
+        kernelMaxHelp: "Strongest adaptive kernel, or the single fixed-mode kernel, at a 1080p baseline. High-resolution videos and images scale it up automatically.",
+        maskScaleHelp: "Expands geometric and SAM-fallback coverage. 1.5 means 50% larger in width and height. For a reviewed still image with oversized geometric coverage, try 1.2–1.3; lowering it reduces the safety margin.",
         thresholdHelp: "Lower values detect less-certain faces but may add false positives. Default: 0.3.",
         minFaceSizeHelp: "Ignores detections smaller than this many pixels in either dimension. Default: 30.",
         trackingHelp: "Quality favors conservative optical-flow tracking; Fast reduces tracking work.",
         maskPreviewHelp: "Writes a diagnostic MP4 at the source resolution, frame rate, and frame count: black means unmasked and blue is the exact final area that would be blurred. Source pixels, audio, boxes, and labels are not included.",
+        imageMaskPreviewHelp: "Writes black/blue diagnostic images. Blue is the exact area normal output would blur; source pixels, boxes, and labels are excluded.",
         overwriteHelp: "Keeps the old file until the replacement is completely encoded, then swaps it atomically.",
         offlineHelp: "Requires the selected SAM model to be present locally. The small YuNet detector is installed during setup.",
         noNvencHelp: "Forces software H.264 encoding even when FFmpeg reports working NVIDIA NVENC support.",
@@ -459,15 +479,21 @@
         startedToast: "Job started", cancellingToast: "Cancelling safely",
         cancelConfirm: "Stop the current job and discard incomplete output?",
         noModels: "YuNet will be downloaded during setup",
-        noYoloModels: "Run the optional YOLO installer first", frames: "frames"
+        noYoloModels: "Run the optional YOLO installer first", frames: "frames", items: "items"
       },
       zh: {
         title: "Blur Face — 本地工作台",
         subtitle: "本地人脸隐私处理 · 视频不会离开你的电脑",
+        imageSubtitle: "本地人脸隐私处理 · 图片不会离开你的电脑",
         settingsTitle: "处理设置",
         settingsHelp: "选择本地视频和隐私级别。所有选项使用与 CLI 相同的处理管线。",
+        mediaType: "媒体类型", videoMode: "视频", imageMode: "图片（单张或批量）",
+        mediaTypeHelp: "可选择单个视频任务或静态图片任务；图片模式只加载一次模型即可批量处理所选图片。",
         inputLabel: "输入视频", inputPlaceholder: "选择本机视频文件", pickInput: "选择视频",
         outputLabel: "输出位置", outputPlaceholder: "输出 MP4 路径", pickOutput: "选择输出",
+        imageInputLabel: "输入图片", imageInputPlaceholder: "选择一张或多张本机图片", pickImages: "选择图片",
+        imageOutputLabel: "输出文件夹", imageOutputPlaceholder: "匿名化图片的输出目录", pickImageOutput: "选择文件夹",
+        imageSettingsHelp: "选择本机图片和隐私强度；整批任务复用同一个检测器和模型实例。",
         modelLabel: "检测模型", modelsLoading: "正在读取本地模型…", pickModel: "选择模型",
         privacyPresets: "隐私预设", standard: "标准",
         standardHelp: "圆角矩形 · 自适应 101–251", strong: "强力",
@@ -498,18 +524,23 @@
         kernelMin: "最小 Kernel", kernelMax: "最大 / 固定 Kernel",
         maskScale: "几何 / fallback 范围", threshold: "检测阈值",
         minFaceSize: "最小人脸尺寸", tracking: "追踪策略",
-        maskPreview: "遮挡区域测试视频",
+        maskPreview: "遮挡区域测试视频", maskPreviewImages: "遮挡区域测试图片",
         overwrite: "允许原子覆盖输出", offline: "要求 SAM 模型离线可用",
         noNvenc: "禁用 NVENC", start: "开始处理", cancel: "取消",
         jobStatus: "任务状态",
         jobHelp: "关闭此页面不会取消任务；使用取消按钮可安全停止并放弃不完整输出。",
         privacyNote: "网页只连接本机服务。输入和输出字段是本地路径，不会将视频上传到网页或远程服务器。",
+        imagePrivacyNote: "网页只连接本机服务。图片直接从本机路径读取，不会上传。",
         inputHelp: "直接从这个本地路径读取源视频，视频不会上传。",
         outputHelp: "完整编码成功后，成品 MP4 才会原子写入这个本地路径。",
+        imageInputHelp: "所选图片路径只在本机使用。支持 JPEG、PNG、WebP、BMP 和 TIFF；输出不会复制源文件元数据。",
+        imageOutputHelp: "每张完整图片会原子写入此目录；覆盖已有文件需要开启覆盖选项。",
         modelHelp: "模型格式必须与所选检测器一致：YuNet 使用 ONNX，可选 YOLO 使用 PT。本地模型文件仍受其自身许可和数据条款约束。",
         maskEngineHelp: "YuNet 两种模式始终可用；完成可选 YOLO 安装后会增加两个明确标注的 YOLO 模式。Ultralytics 默认适用 AGPL-3.0，除非另有 Enterprise 许可；固定的 akanametov/yolo-face 1.0.0 权重按上游声明适用 GPL-3.0 或相应 Enterprise 条款，其 WIDER FACE 训练数据条款也继续适用。快速几何使用单遍流程；SAM 使用更慢的离线两遍时序稳定和有上限的临时存储。详见 THIRD_PARTY_NOTICES.md。",
-        samMaskExpansionHelp: "先按人脸尺寸的这一比例向外扩张有效 SAM 轮廓，再应用组合策略；默认 0.12。",
+        imageMaskEngineHelp: "快速几何复用视频的覆盖渲染器。SAM 对每个检测人脸生成一次框提示轮廓；任何无效或失败 mask 都回退到完整配置几何范围。整批任务只加载一次所选模型。",
+        samMaskExpansionHelp: "先按人脸尺寸的这一比例向外扩张有效 SAM 轮廓，再应用组合策略；默认 0.12，建议保留该安全余量以确保可靠覆盖。",
         segmentationCombineHelp: "并集把当前追踪几何范围加入 SAM 轮廓，推荐使用；交集把 SAM 裁剪在几何范围内；仅 SAM 轮廓模式中，所选检测器只负责发现、追踪、提示和纠偏。稀疏、无效、失败或漂移的 mask 在所有模式下都会回退到几何覆盖。",
+        imageSegmentationCombineHelp: "并集把当前检测到的人脸几何范围加入 SAM 轮廓，推荐使用；交集把轮廓裁剪在该几何范围内；仅 SAM 轮廓模式中，检测器只负责发现人脸和提供框提示。稀疏、无效、失败或不匹配的 mask 在所有模式下都会回退到完整配置几何覆盖。",
         sam2ModelHelp: "建议先测试 Base+。Large 的官方基准质量最高，但更慢、占用更多显存。模型名可能在初始化阶段下载；离线模式要求模型已在 Hugging Face 缓存中，或选择本地模型目录。",
         sam2RefreshIntervalHelp: "每隔 N 帧运行一次所选检测器并重新提示 SAM。数值越小，发现新脸和纠正漂移越及时；默认 15。",
         deviceHelp: "自动模式会让 SAM 或可选 YOLO 优先使用 CUDA；OpenCV YuNet 始终使用 CPU。",
@@ -520,13 +551,14 @@
         temporalStorageLimitHelp: "限制两遍处理使用的代理帧、mask 和元数据总量；成功、失败或从 UI 取消后都会自动清理。",
         maskShapeHelp: "几何模式直接使用；SAM 无效或不可用时作为 fail-closed 安全覆盖。",
         blurStrategyHelp: "自适应模式按检测置信度调整强度；固定模式对所有人脸使用最大 Kernel。",
-        kernelMinHelp: "自适应模糊使用的最小奇数高斯 Kernel；数值越大，隐藏细节越多。",
-        kernelMaxHelp: "自适应模式的最大 Kernel，也是固定模式使用的唯一 Kernel。",
-        maskScaleHelp: "扩大几何遮挡和 SAM fallback 范围；1.5 表示宽和高各扩大 50%。",
+        kernelMinHelp: "以 1080p 为基准的自适应最小奇数高斯 Kernel；高分辨率视频和图片会自动同比放大，数值越大隐藏的细节越多。",
+        kernelMaxHelp: "以 1080p 为基准的自适应最大 Kernel，也是固定模式使用的唯一 Kernel；高分辨率视频和图片会自动同比放大。",
+        maskScaleHelp: "扩大几何遮挡和 SAM fallback 范围；1.5 表示宽和高各扩大 50%。若已检查的静态图片中几何范围过大，可尝试 1.2–1.3；调低会减少安全余量。",
         thresholdHelp: "调低可发现置信度较低的人脸，但可能增加误识别；默认 0.3。",
         minFaceSizeHelp: "忽略任一边小于该像素值的检测结果；默认 30。",
         trackingHelp: "Quality 使用更保守的光流追踪；Fast 减少追踪计算量。",
         maskPreviewHelp: "输出与原视频分辨率、帧率和帧数相同的诊断 MP4：黑色表示不遮挡，蓝色表示实际最终会被模糊的区域。不会包含原视频像素、音轨、检测框或文字。",
+        imageMaskPreviewHelp: "输出黑蓝诊断图片：蓝色是正常输出实际会模糊的准确区域，不包含源图片像素、检测框或文字。",
         overwriteHelp: "新文件完整编码前保留旧文件，成功后再原子替换。",
         offlineHelp: "要求 SAM 模型已经在本地。小型 YuNet 检测模型在初始化安装时准备。",
         noNvencHelp: "即使 FFmpeg 检测到 NVIDIA NVENC，也强制使用软件 H.264 编码。",
@@ -536,7 +568,7 @@
         startedToast: "任务已启动", cancellingToast: "正在安全取消",
         cancelConfirm: "停止当前任务并放弃未完成的输出？",
         noModels: "初始化时会下载 YuNet 模型",
-        noYoloModels: "请先运行可选 YOLO 安装程序", frames: "帧"
+        noYoloModels: "请先运行可选 YOLO 安装程序", frames: "帧", items: "项"
       }
     };
     function browserLanguage() {
@@ -548,6 +580,7 @@
     if (!["auto", "en", "zh"].includes(languageMode)) languageMode = "auto";
     let currentLanguage = languageMode === "auto" ? browserLanguage() : languageMode;
     let lastStatus = "idle";
+    let selectedImageInputs = [];
     const t = (key) => translations[currentLanguage][key] || translations.en[key] || key;
     function applyLanguage() {
       currentLanguage = languageMode === "auto" ? browserLanguage() : languageMode;
@@ -622,13 +655,84 @@
       return $("mask-engine").value.startsWith("sam2.1")
         ? "sam2.1" : "geometric";
     }
+    function imageMode() {
+      return $("media-type").value === "images";
+    }
+    function updateMediaOptions(clearPaths = false) {
+      const images = imageMode();
+      if (clearPaths) {
+        selectedImageInputs = [];
+        $("input").value = "";
+        $("output").value = "";
+      }
+      const keys = images ? {
+        subtitle: "imageSubtitle",
+        settingsHelp: "imageSettingsHelp", inputLabel: "imageInputLabel",
+        inputPlaceholder: "imageInputPlaceholder", pickInput: "pickImages",
+        outputLabel: "imageOutputLabel", outputPlaceholder: "imageOutputPlaceholder",
+        pickOutput: "pickImageOutput", inputHelp: "imageInputHelp",
+        outputHelp: "imageOutputHelp", privacyNote: "imagePrivacyNote",
+        maskPreview: "maskPreviewImages", maskEngineHelp: "imageMaskEngineHelp",
+        maskPreviewHelp: "imageMaskPreviewHelp",
+        segmentationCombineHelp: "imageSegmentationCombineHelp"
+      } : {
+        subtitle: "subtitle",
+        settingsHelp: "settingsHelp", inputLabel: "inputLabel",
+        inputPlaceholder: "inputPlaceholder", pickInput: "pickInput",
+        outputLabel: "outputLabel", outputPlaceholder: "outputPlaceholder",
+        pickOutput: "pickOutput", inputHelp: "inputHelp",
+        outputHelp: "outputHelp", privacyNote: "privacyNote",
+        maskPreview: "maskPreview", maskEngineHelp: "maskEngineHelp",
+        maskPreviewHelp: "maskPreviewHelp",
+        segmentationCombineHelp: "segmentationCombineHelp"
+      };
+      const nodes = {
+        subtitle: document.querySelector('[data-i18n="subtitle"], [data-i18n="imageSubtitle"]'),
+        settingsHelp: document.querySelector('[data-i18n="settingsHelp"], [data-i18n="imageSettingsHelp"]'),
+        inputLabel: document.querySelector('label[for="input"] span[data-i18n]'),
+        inputPlaceholder: $("input"), pickInput: $("pick-input"),
+        outputLabel: document.querySelector('label[for="output"] span[data-i18n]'),
+        outputPlaceholder: $("output"), pickOutput: $("pick-output"),
+        privacyNote: document.querySelector('[data-i18n="privacyNote"], [data-i18n="imagePrivacyNote"]'),
+        maskPreview: $("mask-preview").nextElementSibling
+      };
+      Object.entries(keys).forEach(([original, key]) => {
+        const node = nodes[original];
+        if (!node) return;
+        if (original.endsWith("Placeholder")) {
+          node.dataset.i18nPlaceholder = key;
+          node.placeholder = t(key);
+        } else {
+          node.dataset.i18n = key;
+          node.textContent = t(key);
+        }
+      });
+      [
+        [document.querySelector('[data-help="inputHelp"], [data-help="imageInputHelp"]'), keys.inputHelp],
+        [document.querySelector('[data-help="outputHelp"], [data-help="imageOutputHelp"]'), keys.outputHelp],
+        [document.querySelector('[data-help="maskEngineHelp"], [data-help="imageMaskEngineHelp"]'), keys.maskEngineHelp],
+        [document.querySelector('[data-help="maskPreviewHelp"], [data-help="imageMaskPreviewHelp"]'), keys.maskPreviewHelp],
+        [document.querySelector('[data-help="segmentationCombineHelp"], [data-help="imageSegmentationCombineHelp"]'), keys.segmentationCombineHelp]
+      ].forEach(([node, key]) => {
+        if (!node) return;
+        node.dataset.help = key;
+        node.dataset.tip = t(key);
+        node.setAttribute("aria-label", t(key));
+      });
+      document.querySelectorAll(".video-only").forEach(node => {
+        if (images) node.classList.add("hidden");
+        else if (!node.classList.contains("sam2-option")) node.classList.remove("hidden");
+      });
+    }
     function updateEngineOptions() {
       const engine = selectedMaskEngine();
       const sam2 = engine === "sam2.1";
       document.querySelectorAll(".sam2-option").forEach(node => {
-        node.classList.toggle("hidden", !sam2);
+        node.classList.toggle(
+          "hidden", !sam2 || (imageMode() && node.classList.contains("video-only"))
+        );
       });
-      const temporal = sam2 && $("temporal-stabilization").checked;
+      const temporal = sam2 && !imageMode() && $("temporal-stabilization").checked;
       document.querySelectorAll(".temporal-option").forEach(node => {
         node.classList.toggle("hidden", !temporal);
       });
@@ -636,6 +740,7 @@
       document.querySelectorAll(".accelerated-option").forEach(node => {
         node.classList.toggle("hidden", !accelerated);
       });
+      updateMediaOptions();
     }
     $("mask-engine").addEventListener("change", () => {
       updateEngineOptions();
@@ -643,6 +748,11 @@
       document.querySelectorAll(".preset").forEach(x => x.classList.remove("active"));
     });
     $("temporal-stabilization").addEventListener("change", updateEngineOptions);
+    $("media-type").addEventListener("change", () => {
+      updateMediaOptions(true);
+      updateEngineOptions();
+    });
+    $("input").addEventListener("input", () => { selectedImageInputs = []; });
 
     let localYuNetModels = [];
     let localYoloModels = [];
@@ -714,9 +824,15 @@
     $("pick-input").addEventListener("click", async () => {
       try {
         const data = await api("/api/pick-input", {
-          method: "POST", body: JSON.stringify({ language: currentLanguage })
+          method: "POST", body: JSON.stringify({
+            language: currentLanguage, media_type: $("media-type").value
+          })
         });
-        if (data.path) {
+        if (imageMode() && data.paths && data.paths.length) {
+          selectedImageInputs = data.paths;
+          $("input").value = data.paths.join("\n");
+          if (!$("output").value) $("output").value = data.suggested_output;
+        } else if (data.path) {
           $("input").value = data.path;
           if (!$("output").value) $("output").value = data.suggested_output;
         }
@@ -725,7 +841,9 @@
     $("pick-output").addEventListener("click", async () => {
       try {
         const data = await api("/api/pick-output", {
-          method: "POST", body: JSON.stringify({ language: currentLanguage })
+          method: "POST", body: JSON.stringify({
+            language: currentLanguage, media_type: $("media-type").value
+          })
         });
         if (data.path) $("output").value = data.path;
       } catch (e) { toast(e.message, true); }
@@ -756,8 +874,13 @@
       } catch (e) { toast(e.message, true); }
     });
     $("start").addEventListener("click", async () => {
+      const inputs = selectedImageInputs.length
+        ? selectedImageInputs
+        : $("input").value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
       const payload = {
+        media_type: $("media-type").value,
         input: $("input").value.trim(),
+        ...(imageMode() ? { inputs } : {}),
         output: $("output").value.trim(),
         detector: selectedDetector(),
         model: $("model").value,
@@ -809,7 +932,8 @@
         $("status-text").textContent = t(data.status);
         $("percent").textContent = `${data.progress}%`;
         $("bar").style.width = `${data.progress}%`;
-        $("frames").textContent = `${data.current} / ${data.total} ${t("frames")}`;
+        $("frames").textContent = `${data.current} / ${data.total} ${t(data.media_type === "images" ? "items" : "frames")}`;
+        $("media-type").disabled = running;
         $("start").disabled = running;
         $("cancel").disabled = !["starting", "running"].includes(data.status);
         const logText = data.logs.join("\n");
@@ -824,6 +948,7 @@
       }
     }
     applyLanguage();
+    updateMediaOptions();
     updateEngineOptions();
     loadModels();
     refresh();

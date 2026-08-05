@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,15 @@ import numpy as np
 
 SAM_SESSION_MEMORY_LIMIT_BYTES = 512 * 1024**2
 SAM_MIN_OBJECT_LOGIT = 0.5
+SAM_MIN_IMAGE_SCORE = 0.5
+_EXPECTED_IMAGE_CONFIG_WARNING = " ".join((
+    "You are using a model of type `sam2_video` to instantiate a model of "
+    "type `sam2`. This may be expected if you are loading a checkpoint that "
+    "shares a subset of the architecture (e.g., loading a `sam2_video` "
+    "checkpoint into `Sam2Model`), but is otherwise not supported and can "
+    "yield errors. Please verify that the checkpoint is compatible with the "
+    "model you are instantiating."
+).split())
 
 
 class Sam2Error(RuntimeError):
@@ -39,6 +49,59 @@ def _video_imports():
             "run install-sam2.bat (Windows) or ./install-sam2.sh"
         ) from exc
     return torch, Sam2VideoModel, Sam2VideoProcessor
+
+
+def _load_pretrained(component: Any, source: str, offline: bool):
+    """Prefer a complete local HF snapshot, downloading only when absent."""
+    options = {"local_files_only": True, "trust_remote_code": False}
+    if offline or Path(source).exists():
+        return component.from_pretrained(source, **options)
+    try:
+        return component.from_pretrained(source, **options)
+    except Exception as exc:
+        if not _is_hf_cache_miss(exc):
+            raise
+        return component.from_pretrained(
+            source,
+            local_files_only=False,
+            trust_remote_code=False,
+        )
+
+
+def _is_hf_cache_miss(exc: BaseException) -> bool:
+    """Recognize the Hub's explicit local-snapshot miss without hiding damage."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__ in {
+            "IncompleteSnapshotError",
+            "LocalEntryNotFoundError",
+        }:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+class _ExpectedImageConfigWarningFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = " ".join(record.getMessage().split())
+        return not (
+            record.levelno == logging.WARNING
+            and message == _EXPECTED_IMAGE_CONFIG_WARNING
+        )
+
+
+@contextmanager
+def _suppress_expected_image_config_warning():
+    """Hide the documented video-checkpoint/image-subset compatibility warning."""
+    logger = logging.getLogger("transformers.configuration_utils")
+    warning_filter = _ExpectedImageConfigWarningFilter()
+    logger.addFilter(warning_filter)
+    try:
+        yield
+    finally:
+        logger.removeFilter(warning_filter)
 
 
 def _device(torch: Any, requested: str):
@@ -146,19 +209,14 @@ class Sam2Segmenter:
             if Path(self.model_name).expanduser().exists()
             else self.model_name
         )
-        load_options = {
-            "local_files_only": offline,
-            "trust_remote_code": False,
-        }
         try:
-            self._processor = processor_class.from_pretrained(
-                source, **load_options
-            )
-            self._model = (
-                model_class.from_pretrained(source, **load_options)
-                .to(self.device)
-                .eval()
-            )
+            self._processor = _load_pretrained(processor_class, source, offline)
+            with _suppress_expected_image_config_warning():
+                self._model = (
+                    _load_pretrained(model_class, source, offline)
+                    .to(self.device)
+                    .eval()
+                )
         except Exception as exc:
             mode = " from the local cache" if offline else ""
             raise Sam2Error(
@@ -198,7 +256,7 @@ class Sam2Segmenter:
         while masks_array.ndim > 3 and masks_array.shape[0] == 1:
             masks_array = masks_array[0]
         if masks_array.ndim == 2:
-            return masks_array
+            masks_array = masks_array[np.newaxis, :, :]
         if masks_array.ndim != 3:
             raise ValueError(
                 f"unexpected SAM 2.1 mask shape: {masks_array.shape}"
@@ -210,17 +268,31 @@ class Sam2Segmenter:
             .numpy()
             .reshape(-1)
         )
-        index = int(np.argmax(scores)) if scores.size else 0
-        return masks_array[min(index, masks_array.shape[0] - 1)]
+        if (
+            not scores.size
+            or scores.size != masks_array.shape[0]
+            or not np.isfinite(scores).all()
+            or float(np.max(scores)) < SAM_MIN_IMAGE_SCORE
+        ):
+            raise ValueError(
+                "SAM 2.1 image mask scores are missing, mismatched, non-finite, or low"
+            )
+        index = int(np.argmax(scores))
+        selected = masks_array[index]
+        if selected.shape != roi_bgr.shape[:2]:
+            raise ValueError(
+                "SAM 2.1 post-processed image mask shape "
+                f"{selected.shape} does not match ROI shape {roi_bgr.shape[:2]}"
+            )
+        return selected
 
-    def build_mask(
+    def build_contour(
         self,
         roi_bgr: np.ndarray,
         inner: tuple[int, int, int, int],
         dilation_ratio: float = 0.12,
-        combine: str = "union",
     ) -> np.ndarray | None:
-        """Return a safe ROI mask, or ``None`` for geometric fallback."""
+        """Return a cleaned image contour, or ``None`` for geometric fallback."""
         self.last_error = None
         try:
             if (
@@ -231,16 +303,43 @@ class Sam2Segmenter:
             ):
                 raise ValueError("ROI must be a non-empty BGR image")
             predicted = self._predict(roi_bgr, inner)
-            return build_safe_sam_mask(
+            mask, _clipped_inner = _clean_sam_mask(
                 predicted,
                 roi_bgr.shape[:2],
                 inner,
                 dilation_ratio,
-                combine,
             )
+            return mask
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             return None
+
+    def build_mask(
+        self,
+        roi_bgr: np.ndarray,
+        inner: tuple[int, int, int, int],
+        dilation_ratio: float = 0.12,
+        combine: str = "union",
+    ) -> np.ndarray | None:
+        """Return the compatible union/intersection mask contract."""
+        if combine not in {"union", "intersection"}:
+            self.last_error = "ValueError: combine must be union or intersection"
+            return None
+        contour = self.build_contour(roi_bgr, inner, dilation_ratio)
+        if contour is None:
+            return None
+        ix1, iy1, ix2, iy2 = (int(value) for value in inner)
+        height, width = contour.shape
+        ix1, ix2 = sorted((max(0, ix1), min(width, ix2)))
+        iy1, iy2 = sorted((max(0, iy1), min(height, iy2)))
+        if combine == "union" and ix2 > ix1 and iy2 > iy1:
+            contour[iy1:iy2, ix1:ix2] = 255
+        elif combine == "intersection":
+            core = np.zeros_like(contour)
+            if ix2 > ix1 and iy2 > iy1:
+                core[iy1:iy2, ix1:ix2] = 255
+            contour = cv2.bitwise_and(contour, core)
+        return np.ascontiguousarray(contour, dtype=np.uint8)
 
 
 class Sam2VideoSegmenter:
@@ -263,16 +362,10 @@ class Sam2VideoSegmenter:
             if source_path.exists()
             else self.model_name
         )
-        load_options = {
-            "local_files_only": offline,
-            "trust_remote_code": False,
-        }
         try:
-            self._processor = processor_class.from_pretrained(
-                source, **load_options
-            )
+            self._processor = _load_pretrained(processor_class, source, offline)
             self._model = (
-                model_class.from_pretrained(source, **load_options)
+                _load_pretrained(model_class, source, offline)
                 .to(self.device)
                 .eval()
             )

@@ -1,12 +1,12 @@
 # Blur Face Local
 
-**Offline face anonymization for video, with a local browser UI and CLI.**
+**Offline face anonymization for video and images, with a local browser UI and CLI.**
 
 [中文说明](README.zh.md) · [Version notes](CHANGELOG.md) ·
 [Temporal design](docs/temporal-stabilization.md)
 
-Blur Face decodes, analyzes, masks, and encodes video on the local computer.
-The browser page connects only to `127.0.0.1`; video frames are never uploaded.
+Blur Face decodes, analyzes, masks, and writes video or images on the local
+computer. The browser page connects only to `127.0.0.1`; media is never uploaded.
 
 ## Masking modes
 
@@ -27,6 +27,21 @@ Ultralytics is AGPL-3.0 unless covered by an Enterprise license, and the
 applicable Enterprise license. Its training recipe identifies WIDER FACE, whose
 dataset terms also remain applicable. YOLO is not installed by the base runtime
 and is never selected from a `.pt` file automatically.
+
+## Still images and batches
+
+Version 1.2.0 applies the same detection, geometric coverage, blur, preview, and
+optional SAM policies to JPEG, PNG, WebP, BMP, and TIFF images. The CLI accepts
+one image, multiple image paths, or one non-recursive image directory. Local
+Studio has a bilingual **Video / Images** selector and native multi-image and
+output-folder pickers. A batch loads the detector and optional SAM model once
+and retains only the current image working set.
+
+Each completed image is committed atomically. Without `--overwrite`, a file
+that appears during processing is not replaced. Output images intentionally do
+not copy EXIF or other source metadata, removing embedded location and camera
+details as well. PNG, WebP, and TIFF transparency is preserved; choosing an
+opaque output format for an alpha-bearing image fails without committing it.
 
 ## Quick start
 
@@ -59,26 +74,28 @@ On Windows, if FFmpeg is missing, `init.bat` discloses that Gyan's full build
 is a large external GPL package and asks before invoking WinGet. Unix setup
 only reports the system-package prerequisite.
 
-During initialization, setup explains the optional YOLO license boundary and
-asks whether to install it. Choosing **No** leaves the lean MIT/Apache-default
-YuNet runtime. To make that choice later, run:
+During Windows initialization, setup explicitly asks whether to install the
+optional YOLO detector and SAM 2.1 mask engine. Choosing **No** leaves the lean
+MIT/Apache-default YuNet geometric runtime. CI skips both prompts. Either choice
+can be made later by running:
 
 ```powershell
 .\install-yolo.bat
+.\install-sam2.bat
 ```
 
 ```bash
 ./install-yolo.sh
 ```
 
-The optional installer asks for license acceptance, installs its PyTorch and
+The optional YOLO installer asks for license acceptance, installs its PyTorch and
 Ultralytics dependencies, and downloads the SHA-256-pinned
 `yolov11m-face.pt`. Before acceptance it identifies the weight's upstream
 GPL-3.0/Enterprise boundary and WIDER FACE training-data source. CI and
 non-interactive initialization skip YOLO by default. See
 `THIRD_PARTY_NOTICES.md` for exact upstream links.
 
-To enable SAM after normal setup:
+On Linux/macOS, or to enable SAM later after declining the Windows prompt:
 
 ```powershell
 .\install-sam2.bat
@@ -89,18 +106,27 @@ To enable SAM after normal setup:
 ```
 
 The SAM installer selects the tested CUDA runtime when NVIDIA is available and
-otherwise installs the CPU runtime. It also reports each stage duration. A
-named SAM checkpoint may download during model initialization, before video
-analysis starts; use offline mode after it is cached or select a local model
-directory.
+otherwise installs the CPU runtime. A named SAM checkpoint may download during
+model initialization, before analysis starts. Later jobs try the complete local
+cache first, so they do not contact the Hub merely to check for updates. Use
+offline mode to require cached files, or select a local model directory. Each
+UI job is a separate process and therefore loads the weights once per job, while
+an image batch reuses that one loaded model for every image.
+
+Public Hugging Face checkpoints do not require an account. An optional
+`.venv\Scripts\hf.exe auth login` on Windows (or `.venv/bin/hf auth login` on
+Linux/macOS) removes the unauthenticated first-download notice and raises Hub
+rate limits; credentials are handled by the Hugging Face client, not this app.
 
 A normal `git pull` does not require reinitialization unless dependency lock
 files or the setup scripts changed.
 
 ## Local Studio
 
-The main form intentionally exposes only the input, output, masking mode, and
-privacy preset. Without optional YOLO it shows two YuNet modes: Fast geometric
+The main form exposes media type, input, output, masking mode, and privacy
+preset. Image mode accepts one or many local paths and an output folder, while
+video mode retains its single input/output workflow. Without optional YOLO it
+shows two YuNet modes: Fast geometric
 and SAM high quality. After a complete YOLO installation, the same selector
 adds Fast geometric · YOLO and SAM · YOLO. **Advanced settings** expands the
 controls that apply to the selected engine:
@@ -172,6 +198,10 @@ by default and are removed on success, failure, or UI cancellation.
 
 ```bash
 .venv/bin/blur-face input.mov -o output.mp4 --overwrite
+
+.venv/bin/blur-face portrait.jpg -o portrait_blurred.jpg
+.venv/bin/blur-face first.jpg second.png -o blurred-images/
+.venv/bin/blur-face photos/ -o blurred-images/
 ```
 
 Useful defaults:
@@ -205,8 +235,12 @@ Run `blur-face --help` for all tracking, blur, encoding, and offline options.
 - Incomplete encoding never replaces the destination. Output is written to a
   job-owned partial path and atomically moved into place only after FFmpeg
   succeeds and produces a non-empty file.
-- The UI owns a unique job directory beside the output. Normal exceptions,
-  cancellation, and forced process-tree termination all trigger cleanup.
+- Image output follows the same no-partial-output rule per file. A failed or
+  cancelled batch keeps completed images but never commits the current
+  incomplete image.
+- The UI owns a unique job directory on the destination filesystem (inside an
+  image output folder). Normal exceptions, cancellation, and forced
+  process-tree termination all trigger cleanup.
 - FFmpeg is an external system prerequisite and is not bundled by this
   project. Its license depends on the build selected by the user.
 

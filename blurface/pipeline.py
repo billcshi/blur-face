@@ -374,8 +374,10 @@ class VideoProcessor:
                                     # the currently observed face. Cover the
                                     # smoothed/predicted and observed regions
                                     # independently.
-                                    kernel = config.blur_kernel_for(
-                                        track.confidence, threshold
+                                    kernel = config.blur_kernel_for_frame(
+                                        track.confidence,
+                                        threshold,
+                                        frame.shape[:2],
                                     )
                                     if (
                                         segmenter is not None
@@ -1483,13 +1485,16 @@ class VideoProcessor:
                             )
                             kernel = max(
                                 (
-                                    config.blur_kernel_for(
+                                    config.blur_kernel_for_frame(
                                         record.confidence,
                                         record.threshold,
+                                        frame.shape[:2],
                                     )
                                     for record in frame_records
                                 ),
-                                default=config.blur_kernel_for(1.0, 0.0),
+                                default=config.blur_kernel_for_frame(
+                                    1.0, 0.0, frame.shape[:2]
+                                ),
                             )
                             render_effect(
                                 frame,
@@ -1523,8 +1528,10 @@ class VideoProcessor:
         """Fail closed from per-track records if a composite file is unreadable."""
         config = self.config
         for record in store.records_for_frame(frame_index):
-            kernel = config.blur_kernel_for(
-                record.confidence, record.threshold
+            kernel = config.blur_kernel_for_frame(
+                record.confidence,
+                record.threshold,
+                frame.shape[:2],
             )
             mask = store.load_mask(record)
             if record.fallback or mask is None:

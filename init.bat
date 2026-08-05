@@ -114,9 +114,30 @@ echo [NOTICE] Optional YOLO skipped; YuNet remains selected.
 :YOLO_DONE
 
 echo.
+echo Optional mask engine:
+echo SAM 2.1 installs PyTorch and Transformers and may use several GiB of disk.
+echo The selected SAM checkpoint downloads separately on first use unless it is
+echo already cached or you select a local model directory.
+if /I "%CI%"=="true" goto SAM_SKIPPED
+if /I "%BLUR_FACE_SKIP_SAM_INSTALL%"=="1" goto SAM_SKIPPED
+if /I "%BLUR_FACE_INSTALL_SAM%"=="1" goto SAM_INSTALL
+choice /C YN /N /M "Install optional SAM 2.1 support now? [Y/N] "
+if errorlevel 2 goto SAM_SKIPPED
+
+:SAM_INSTALL
+call install-sam2.bat
+if errorlevel 1 exit /b 1
+goto SAM_DONE
+
+:SAM_SKIPPED
+echo [NOTICE] Optional SAM 2.1 skipped; geometric masking remains ready.
+
+:SAM_DONE
+
+echo.
 %BASE_PYTHON% -c "import time; print('Setup complete in {:.1f}s.'.format(time.time()-float('%SETUP_START%')))"
 echo Geometric mode with YuNet is ready without PyTorch.
-echo Run install-sam2.bat for SAM, or install-yolo.bat to add YOLO later.
+echo Run install-sam2.bat for SAM or install-yolo.bat for YOLO if skipped above.
 echo Dependency and model licenses: THIRD_PARTY_NOTICES.md
 echo Run: .venv\Scripts\blur-face.exe input.mov -o output.mp4
 exit /b 0

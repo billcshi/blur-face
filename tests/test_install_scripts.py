@@ -32,7 +32,7 @@ class InstallScriptTests(unittest.TestCase):
         windows = (root / "install-sam2.bat").read_text(encoding="utf-8")
         self.assertIn("requirements.sam2.lock", windows)
         self.assertNotIn("\npython -c", windows)
-        self.assertIn('"%VENV_PYTHON%" -c "import time', windows)
+        self.assertIn('"%VENV_PYTHON%" -c "import torch', windows)
         self.assertIn(
             "requirements.sam2.lock",
             (root / "install-sam2.sh").read_text(encoding="utf-8"),
@@ -42,6 +42,22 @@ class InstallScriptTests(unittest.TestCase):
                 "requirements.sam2.lock",
                 (root / script).read_text(encoding="utf-8"),
             )
+
+    def test_windows_init_offers_explicit_sam_choice(self):
+        root = Path(__file__).resolve().parents[1]
+        windows = (root / "init.bat").read_text(encoding="utf-8")
+        self.assertIn("Install optional SAM 2.1 support now?", windows)
+        self.assertIn("BLUR_FACE_INSTALL_SAM", windows)
+        self.assertIn("BLUR_FACE_SKIP_SAM_INSTALL", windows)
+        self.assertIn("call install-sam2.bat", windows)
+        self.assertIn('if /I "%CI%"=="true" goto SAM_SKIPPED', windows)
+
+    def test_windows_sam_installer_does_not_depend_on_captured_timers(self):
+        root = Path(__file__).resolve().parents[1]
+        windows = (root / "install-sam2.bat").read_text(encoding="utf-8")
+        self.assertNotIn("SETUP_START", windows)
+        self.assertNotIn("STAGE_START", windows)
+        self.assertIn("SAM setup complete", windows)
 
     def test_init_rebuilds_environment_and_explains_optional_detector(self):
         root = Path(__file__).resolve().parents[1]
